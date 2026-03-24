@@ -10,6 +10,8 @@ These tests verify the core code paths without launching Streamlit:
 
 from __future__ import annotations
 
+import numpy as np
+import pandas as pd
 import pytest
 from abides_markets.config_system import (
     AgentGroupConfig,
@@ -61,12 +63,14 @@ def resolve_type(schema: dict) -> tuple[str, bool]:
     if any_of:
         types = [s.get("type") for s in any_of if isinstance(s, dict)]
         nullable = "null" in types
-        param_type = next((t for t in types if t != "null"), "string")
+        non_null = [t for t in types if t != "null"]
+        param_type = non_null[0] if len(non_null) == 1 else "string"
     else:
         raw_type = schema.get("type", "string")
         if isinstance(raw_type, list):
             nullable = "null" in raw_type
-            param_type = next((t for t in raw_type if t != "null"), "string")
+            non_null = [t for t in raw_type if t != "null"]
+            param_type = non_null[0] if len(non_null) == 1 else "string"
         else:
             param_type = raw_type
     return param_type, nullable
@@ -153,6 +157,21 @@ class TestTypeResolution:
 
     def test_no_type_defaults_to_string(self):
         pt, nullable = resolve_type({})
+        assert pt == "string"
+        assert nullable is False
+
+    def test_union_int_str_falls_back_to_string(self):
+        """Union[int, str] (e.g. window_size) must resolve to string widget."""
+        pt, nullable = resolve_type({"type": ["integer", "string"], "default": "adaptive"})
+        assert pt == "string"
+        assert nullable is False
+
+    def test_anyof_union_int_str_falls_back_to_string(self):
+        """anyOf with multiple non-null types must resolve to string widget."""
+        pt, nullable = resolve_type({
+            "anyOf": [{"type": "integer"}, {"type": "string"}],
+            "default": "adaptive",
+        })
         assert pt == "string"
         assert nullable is False
 
@@ -269,6 +288,68 @@ class TestSimulationRun:
         )
         result = run_simulation(cfg, profile=ResultProfile.SUMMARY)
         assert isinstance(result, SimulationResult)
+
+    def test_full_profile_produces_order_logs(self):
+        """ResultProfile.FULL should provide order logs."""
+        cfg = _minimal_config(seed=42)
+        result = run_simulation(cfg, profile=ResultProfile.FULL)
+        assert isinstance(result, SimulationResult)
+        order_df = result.order_logs()
+        assert order_df is not None
+        assert len(order_df) > 0
+        assert "EventType" in order_df.columns
+
+    def test_order_logs_have_expected_columns(self):
+        cfg = _minimal_config(seed=42)
+        result = run_simulation(cfg, profile=ResultProfile.FULL)
+        order_df = result.order_logs()
+        for col in ["EventTime", "EventType", "agent_id"]:
+            assert col in order_df.columns, f"Missing column {col}"
+
+    def test_l1_derived_metrics(self):
+        """Verify L1-derived quant metrics can be computed."""
+        cfg = SimulationConfig(
+            market=MarketConfig(
+                ticker="ABM",
+                date="20210205",
+                start_time="09:30:00",
+                end_time="10:00:00",  # 30 min for enough price movement
+                oracle=SparseMeanRevertingOracleConfig(r_bar=100_000),
+                exchange=ExchangeConfig(book_logging=True, book_log_depth=10),
+            ),
+            agents=_minimal_agents(),
+            simulation=SimulationMeta(seed=42),
+        )
+        result = run_simulation(cfg, profile=ResultProfile.FULL)
+        market = result.markets["ABM"]
+        assert market.l1_series is not None
+
+        df = market.l1_series.as_dataframe()
+        bid = pd.to_numeric(df["bid_price_cents"], errors="coerce") / 100
+        ask = pd.to_numeric(df["ask_price_cents"], errors="coerce") / 100
+        mid = (bid + ask) / 2
+        spread = ask - bid
+        log_ret = np.log(mid / mid.shift(1)).dropna()
+        log_ret = log_ret.replace([np.inf, -np.inf], np.nan).dropna()
+
+        # Spread must be non-negative
+        assert (spread.dropna() >= 0).all()
+        # Log returns should exist
+        assert len(log_ret) > 0
+        # Volatility (std) should be finite
+        vol = log_ret.std()
+        assert np.isfinite(vol)
+
+    def test_agent_analytics_fields(self):
+        """Verify agent data has all fields needed for agent analytics tab."""
+        cfg = _minimal_config(seed=42)
+        result = run_simulation(cfg, profile=ResultProfile.FULL)
+        assert len(result.agents) > 0
+        for a in result.agents:
+            assert hasattr(a, "agent_name")
+            assert hasattr(a, "final_holdings")
+            assert isinstance(a.final_holdings, dict)
+            assert hasattr(a, "mark_to_market_cents")
 
 
 # ── CLI entry point ───────────────────────────────────────────────────────────

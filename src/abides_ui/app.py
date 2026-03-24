@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -200,12 +201,15 @@ for idx, agent_info in enumerate(agent_types):
                         if any_of:
                             types = [s.get("type") for s in any_of if isinstance(s, dict)]
                             nullable = "null" in types
-                            param_type = next((t for t in types if t != "null"), "string")
+                            non_null = [t for t in types if t != "null"]
+                            # Multiple non-null types (e.g. Union[int, str]) → text input
+                            param_type = non_null[0] if len(non_null) == 1 else "string"
                         else:
                             raw_type = schema.get("type", "string")
                             if isinstance(raw_type, list):
                                 nullable = "null" in raw_type
-                                param_type = next((t for t in raw_type if t != "null"), "string")
+                                non_null = [t for t in raw_type if t != "null"]
+                                param_type = non_null[0] if len(non_null) == 1 else "string"
                             else:
                                 param_type = raw_type
 
@@ -331,7 +335,7 @@ if run_clicked:
     config = build_config()
     with st.spinner("Running simulation…"):
         t0 = time.perf_counter()
-        result: SimulationResult = run_simulation(config, profile=ResultProfile.SUMMARY | ResultProfile.L1_SERIES)
+        result: SimulationResult = run_simulation(config, profile=ResultProfile.FULL)
         wall_time = time.perf_counter() - t0
     st.session_state["result"] = result
     st.session_state["wall_time"] = wall_time
@@ -349,80 +353,434 @@ ticker_key = st.session_state["ticker"]
 wall_time: float = st.session_state["wall_time"]
 market = result.markets[ticker_key]
 
-# Summary metrics
-st.subheader("Summary")
-metric_cols = st.columns(5)
+# ── Pre-compute derived series from L1 ────────────────────────────────────────
+
+l1_df: pd.DataFrame | None = None
+bid_series: pd.Series | None = None
+ask_series: pd.Series | None = None
+mid_series: pd.Series | None = None
+spread_series: pd.Series | None = None
+log_returns: pd.Series | None = None
+time_col: pd.Series | None = None
+
+if market.l1_series is not None:
+    l1_df = market.l1_series.as_dataframe()
+    time_col = pd.to_datetime(l1_df["time_ns"], unit="ns")
+    bid_series = pd.to_numeric(l1_df["bid_price_cents"], errors="coerce") / 100
+    ask_series = pd.to_numeric(l1_df["ask_price_cents"], errors="coerce") / 100
+    mid_series = (bid_series + ask_series) / 2
+    spread_series = ask_series - bid_series
+    log_returns = np.log(mid_series / mid_series.shift(1)).dropna()
+    log_returns = log_returns.replace([np.inf, -np.inf], np.nan).dropna()
+
+# ── Pre-compute order log data ────────────────────────────────────────────────
+
+order_df: pd.DataFrame | None = None
+try:
+    order_df = result.order_logs()
+    if order_df is not None and len(order_df) == 0:
+        order_df = None
+except Exception:
+    order_df = None
+
+# ── Summary header ────────────────────────────────────────────────────────────
+
+st.subheader("Results")
 
 bid = market.l1_close.bid_price_cents
 ask = market.l1_close.ask_price_cents
-mid = ((bid + ask) / 2 / 100) if bid is not None and ask is not None else None
-spread = ((ask - bid) / 100) if bid is not None and ask is not None else None
+mid_close = ((bid + ask) / 2 / 100) if bid is not None and ask is not None else None
+spread_close = ((ask - bid) / 100) if bid is not None and ask is not None else None
 vwap = market.liquidity.vwap_cents / 100 if market.liquidity.vwap_cents is not None else None
 volume = market.liquidity.total_exchanged_volume
 
-metric_cols[0].metric("Mid Price", f"${mid:,.2f}" if mid is not None else "N/A")
-metric_cols[1].metric("Bid-Ask Spread", f"${spread:,.2f}" if spread is not None else "N/A")
-metric_cols[2].metric("VWAP", f"${vwap:,.2f}" if vwap is not None else "N/A")
-metric_cols[3].metric("Volume", f"{volume:,}")
-metric_cols[4].metric("Wall-clock time", f"{wall_time:.1f}s")
+realized_vol = None
+if log_returns is not None and len(log_returns) > 1:
+    realized_vol = float(log_returns.std())
 
-# Price chart
-st.subheader("Price Series")
+price_range = None
+if mid_series is not None:
+    valid_mid = mid_series.dropna()
+    if len(valid_mid) > 0:
+        price_range = float(valid_mid.max() - valid_mid.min())
 
-if market.l1_series is not None:
-    df = market.l1_series.as_dataframe()
-    time_col = pd.to_datetime(df["time_ns"], unit="ns")
+m_cols = st.columns(7)
+m_cols[0].metric("Mid Price", f"${mid_close:,.2f}" if mid_close is not None else "N/A")
+m_cols[1].metric("Bid-Ask Spread", f"${spread_close:,.2f}" if spread_close is not None else "N/A")
+m_cols[2].metric("VWAP", f"${vwap:,.2f}" if vwap is not None else "N/A")
+m_cols[3].metric("Volume", f"{volume:,}")
+m_cols[4].metric("Realized Vol (σ)", f"{realized_vol:.6f}" if realized_vol is not None else "N/A")
+m_cols[5].metric("Price Range", f"${price_range:,.2f}" if price_range is not None else "N/A")
+m_cols[6].metric("Wall-clock", f"{wall_time:.1f}s")
 
-    bid_series = pd.to_numeric(df["bid_price_cents"], errors="coerce") / 100
-    ask_series = pd.to_numeric(df["ask_price_cents"], errors="coerce") / 100
-    mid_series = (bid_series + ask_series) / 2
+# ── Tabbed analytics ─────────────────────────────────────────────────────────
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=time_col, y=bid_series, mode="lines", name="Best Bid", line={"color": "#2ca02c"}))
-    fig.add_trace(go.Scatter(x=time_col, y=ask_series, mode="lines", name="Best Ask", line={"color": "#d62728"}))
-    fig.add_trace(go.Scatter(x=time_col, y=mid_series, mode="lines", name="Mid Price", line={"color": "#1f77b4", "width": 2}))
+tab_overview, tab_micro, tab_flow, tab_agents = st.tabs(
+    ["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics"]
+)
 
-    fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Price ($)",
-        hovermode="x unified",
-        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
-        margin={"l": 60, "r": 20, "t": 40, "b": 40},
-    )
-    st.plotly_chart(fig, use_container_width=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1: MARKET OVERVIEW
+# ══════════════════════════════════════════════════════════════════════════════
 
-    with st.expander("Raw L1 data"):
-        st.dataframe(df, use_container_width=True)
-else:
-    st.warning("L1 price series not available.")
-
-# Agent P&L summary
-if result.agents:
-    st.subheader("Agent P&L Summary")
-    agent_rows = [
-        {
-            "ID": a.agent_id,
-            "Type": a.agent_type,
-            "Starting Cash ($)": a.starting_cash_cents / 100,
-            "Mark-to-Market ($)": a.mark_to_market_cents / 100,
-            "P&L ($)": a.pnl_cents / 100,
-            "P&L (%)": round(a.pnl_pct, 4),
-        }
-        for a in result.agents
-    ]
-    agent_df = pd.DataFrame(agent_rows)
-
-    agg = (
-        agent_df.groupby("Type")
-        .agg(
-            Count=("ID", "count"),
-            **{"Avg P&L ($)": ("P&L ($)", "mean")},
-            **{"Total P&L ($)": ("P&L ($)", "sum")},
-            **{"Avg P&L (%)": ("P&L (%)", "mean")},
+with tab_overview:
+    if l1_df is not None and time_col is not None:
+        fig_price = go.Figure()
+        fig_price.add_trace(go.Scatter(
+            x=time_col, y=bid_series, mode="lines", name="Best Bid",
+            line={"color": "#2ca02c", "width": 1},
+        ))
+        fig_price.add_trace(go.Scatter(
+            x=time_col, y=ask_series, mode="lines", name="Best Ask",
+            line={"color": "#d62728", "width": 1},
+        ))
+        fig_price.add_trace(go.Scatter(
+            x=time_col, y=mid_series, mode="lines", name="Mid Price",
+            line={"color": "#1f77b4", "width": 2},
+        ))
+        fig_price.update_layout(
+            title="Price Series (Bid / Ask / Mid)",
+            xaxis_title="Time", yaxis_title="Price ($)",
+            hovermode="x unified",
+            legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+            margin={"l": 60, "r": 20, "t": 60, "b": 40},
+            height=450,
         )
-        .reset_index()
-    )
-    st.dataframe(agg, use_container_width=True, hide_index=True)
+        st.plotly_chart(fig_price, use_container_width=True)
 
-    with st.expander("Per-agent details"):
-        st.dataframe(agent_df, use_container_width=True, hide_index=True)
+        if spread_series is not None:
+            fig_spread = go.Figure()
+            fig_spread.add_trace(go.Scatter(
+                x=time_col, y=spread_series, mode="lines", name="Spread",
+                fill="tozeroy", line={"color": "#ff7f0e", "width": 1},
+                fillcolor="rgba(255, 127, 14, 0.2)",
+            ))
+            avg_spread = float(spread_series.mean()) if len(spread_series) > 0 else 0
+            fig_spread.add_hline(y=avg_spread, line_dash="dash", line_color="gray",
+                                annotation_text=f"Mean: ${avg_spread:.4f}")
+            fig_spread.update_layout(
+                title="Bid-Ask Spread Over Time",
+                xaxis_title="Time", yaxis_title="Spread ($)",
+                hovermode="x unified", height=300,
+                margin={"l": 60, "r": 20, "t": 60, "b": 40},
+            )
+            st.plotly_chart(fig_spread, use_container_width=True)
+
+        with st.expander("Raw L1 data"):
+            st.dataframe(l1_df, use_container_width=True)
+    else:
+        st.warning("L1 price series not available.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 2: MICROSTRUCTURE
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_micro:
+    if l1_df is not None and spread_series is not None and mid_series is not None:
+        # ── Spread statistics ─────────────────────────────────────────────
+        st.markdown("#### Spread Statistics")
+        valid_spread = spread_series.dropna()
+        valid_mid_ms = mid_series.dropna()
+        spread_pct = (valid_spread / valid_mid_ms * 100).dropna() if len(valid_mid_ms) > 0 else pd.Series(dtype=float)
+
+        sp_cols = st.columns(6)
+        sp_cols[0].metric("Mean Spread", f"${valid_spread.mean():.4f}" if len(valid_spread) > 0 else "N/A")
+        sp_cols[1].metric("Median Spread", f"${valid_spread.median():.4f}" if len(valid_spread) > 0 else "N/A")
+        sp_cols[2].metric("Max Spread", f"${valid_spread.max():.4f}" if len(valid_spread) > 0 else "N/A")
+        sp_cols[3].metric("Spread Std", f"${valid_spread.std():.4f}" if len(valid_spread) > 1 else "N/A")
+        sp_cols[4].metric("Mean Spread %", f"{spread_pct.mean():.4f}%" if len(spread_pct) > 0 else "N/A")
+        sp_cols[5].metric("Median Spread %", f"{spread_pct.median():.4f}%" if len(spread_pct) > 0 else "N/A")
+
+        # ── Market quality ────────────────────────────────────────────────
+        st.markdown("#### Market Quality")
+        mq_cols = st.columns(4)
+        mq_cols[0].metric("% Time No Bid", f"{market.liquidity.pct_time_no_bid:.1f}%")
+        mq_cols[1].metric("% Time No Ask", f"{market.liquidity.pct_time_no_ask:.1f}%")
+        both_sides = 100 - max(market.liquidity.pct_time_no_bid, market.liquidity.pct_time_no_ask)
+        mq_cols[2].metric("% Time Two-Sided", f"{both_sides:.1f}%")
+        last_trade = market.liquidity.last_trade_cents
+        mq_cols[3].metric("Last Trade", f"${last_trade / 100:.2f}" if last_trade is not None else "N/A")
+
+        st.divider()
+
+        # ── Rolling volatility ────────────────────────────────────────────
+        if log_returns is not None and len(log_returns) > 10:
+            st.markdown("#### Realized Volatility")
+
+            window = min(100, len(log_returns) // 3) if len(log_returns) > 30 else max(5, len(log_returns) // 3)
+            rolling_vol = log_returns.rolling(window=window).std()
+
+            fig_vol = go.Figure()
+            ret_time = time_col.iloc[log_returns.index]
+            fig_vol.add_trace(go.Scatter(
+                x=ret_time, y=rolling_vol, mode="lines", name=f"Rolling σ ({window}-tick)",
+                line={"color": "#9467bd", "width": 1.5},
+            ))
+            fig_vol.update_layout(
+                title=f"Rolling Realized Volatility ({window}-tick window)",
+                xaxis_title="Time", yaxis_title="σ (log returns)",
+                hovermode="x unified", height=350,
+                margin={"l": 60, "r": 20, "t": 60, "b": 40},
+            )
+            st.plotly_chart(fig_vol, use_container_width=True)
+
+        # ── Book pressure ─────────────────────────────────────────────────
+        st.markdown("#### Book Pressure")
+        bid_qty = pd.to_numeric(l1_df["bid_qty"], errors="coerce")
+        ask_qty = pd.to_numeric(l1_df["ask_qty"], errors="coerce")
+        pressure = bid_qty - ask_qty
+
+        fig_pressure = go.Figure()
+        colors = ["#2ca02c" if v >= 0 else "#d62728" for v in pressure.fillna(0)]
+        fig_pressure.add_trace(go.Bar(
+            x=time_col, y=pressure, name="Bid − Ask Qty",
+            marker_color=colors,
+        ))
+        fig_pressure.update_layout(
+            title="Order Book Pressure (Bid Qty − Ask Qty)",
+            xaxis_title="Time", yaxis_title="Qty Imbalance",
+            hovermode="x unified", height=350,
+            margin={"l": 60, "r": 20, "t": 60, "b": 40},
+        )
+        st.plotly_chart(fig_pressure, use_container_width=True)
+
+        # ── Returns distribution ──────────────────────────────────────────
+        if log_returns is not None and len(log_returns) > 5:
+            st.markdown("#### Mid-Price Returns Distribution")
+
+            ret_cols = st.columns(4)
+            ret_cols[0].metric("Mean Return", f"{log_returns.mean():.8f}")
+            ret_cols[1].metric("Std Dev", f"{log_returns.std():.6f}")
+            skew_val = float(log_returns.skew()) if len(log_returns) > 2 else 0.0
+            kurt_val = float(log_returns.kurtosis()) if len(log_returns) > 3 else 0.0
+            ret_cols[2].metric("Skewness", f"{skew_val:.4f}")
+            ret_cols[3].metric("Excess Kurtosis", f"{kurt_val:.4f}")
+
+            fig_hist = go.Figure()
+            fig_hist.add_trace(go.Histogram(
+                x=log_returns, nbinsx=50, name="Log Returns",
+                marker_color="#1f77b4", opacity=0.7,
+            ))
+            fig_hist.update_layout(
+                title="Distribution of Log Returns (Mid-Price)",
+                xaxis_title="Log Return", yaxis_title="Frequency",
+                height=350,
+                margin={"l": 60, "r": 20, "t": 60, "b": 40},
+            )
+            st.plotly_chart(fig_hist, use_container_width=True)
+    else:
+        st.warning("L1 series data is required for microstructure analysis.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3: ORDER FLOW
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_flow:
+    if order_df is not None and len(order_df) > 0:
+        # ── Summary metrics ───────────────────────────────────────────────
+        st.markdown("#### Order Flow Summary")
+
+        total_orders = len(order_df[order_df["EventType"] == "ORDER_SUBMITTED"]) if "EventType" in order_df.columns else 0
+        executed = len(order_df[order_df["EventType"] == "ORDER_EXECUTED"]) if "EventType" in order_df.columns else 0
+        cancelled = len(order_df[order_df["EventType"].isin(["ORDER_CANCELLED", "PARTIAL_CANCELLED"])]) if "EventType" in order_df.columns else 0
+
+        fill_rate = (executed / total_orders * 100) if total_orders > 0 else 0
+        cancel_rate = (cancelled / total_orders * 100) if total_orders > 0 else 0
+
+        of_cols = st.columns(5)
+        of_cols[0].metric("Total Orders Submitted", f"{total_orders:,}")
+        of_cols[1].metric("Executions", f"{executed:,}")
+        of_cols[2].metric("Cancellations", f"{cancelled:,}")
+        of_cols[3].metric("Fill Rate", f"{fill_rate:.1f}%")
+        of_cols[4].metric("Cancel Rate", f"{cancel_rate:.1f}%")
+
+        st.divider()
+
+        # ── Order type breakdown ──────────────────────────────────────────
+        if "EventType" in order_df.columns:
+            st.markdown("#### Event Type Breakdown")
+            event_counts = order_df["EventType"].value_counts()
+
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                fig_events = go.Figure(data=[go.Pie(
+                    labels=event_counts.index.tolist(),
+                    values=event_counts.values.tolist(),
+                    hole=0.4,
+                )])
+                fig_events.update_layout(
+                    title="Order Event Types",
+                    height=350,
+                    margin={"l": 20, "r": 20, "t": 60, "b": 20},
+                )
+                st.plotly_chart(fig_events, use_container_width=True)
+
+            with c2:
+                if "side" in order_df.columns:
+                    submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
+                    side_counts = submitted["side"].value_counts()
+                    fig_sides = go.Figure(data=[go.Bar(
+                        x=side_counts.index.tolist(),
+                        y=side_counts.values.tolist(),
+                        marker_color=["#2ca02c" if s == "BID" else "#d62728" for s in side_counts.index],
+                    )])
+                    fig_sides.update_layout(
+                        title="Order Side Balance (Submitted)",
+                        xaxis_title="Side", yaxis_title="Count",
+                        height=350,
+                        margin={"l": 60, "r": 20, "t": 60, "b": 40},
+                    )
+                    st.plotly_chart(fig_sides, use_container_width=True)
+
+        # ── Cumulative order flow imbalance ───────────────────────────────
+        if "side" in order_df.columns and "EventTime" in order_df.columns:
+            st.markdown("#### Cumulative Order Flow Imbalance")
+            submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"].copy()
+            if len(submitted) > 0:
+                submitted = submitted.sort_values("EventTime")
+                submitted["flow_sign"] = submitted["side"].map({"BID": 1, "ASK": -1}).fillna(0).astype(int)
+                submitted["cum_imbalance"] = submitted["flow_sign"].cumsum()
+                flow_time = pd.to_datetime(submitted["EventTime"], unit="ns")
+
+                fig_flow = go.Figure()
+                fig_flow.add_trace(go.Scatter(
+                    x=flow_time, y=submitted["cum_imbalance"],
+                    mode="lines", name="Cumulative Imbalance",
+                    line={"color": "#17becf", "width": 1.5},
+                    fill="tozeroy", fillcolor="rgba(23, 190, 207, 0.15)",
+                ))
+                fig_flow.add_hline(y=0, line_dash="dash", line_color="gray")
+                fig_flow.update_layout(
+                    title="Cumulative Order Flow Imbalance (Buy − Sell)",
+                    xaxis_title="Time", yaxis_title="Cumulative Imbalance",
+                    hovermode="x unified", height=350,
+                    margin={"l": 60, "r": 20, "t": 60, "b": 40},
+                )
+                st.plotly_chart(fig_flow, use_container_width=True)
+
+        # ── Volume by agent type ──────────────────────────────────────────
+        if "agent_type" in order_df.columns:
+            st.markdown("#### Activity by Agent Type")
+            exec_df = order_df[order_df["EventType"] == "ORDER_EXECUTED"]
+            if len(exec_df) > 0 and "quantity" in exec_df.columns:
+                vol_by_type = exec_df.groupby("agent_type")["quantity"].sum().sort_values(ascending=True)
+                fig_vol_type = go.Figure(data=[go.Bar(
+                    x=vol_by_type.values.tolist(),
+                    y=vol_by_type.index.tolist(),
+                    orientation="h",
+                    marker_color="#636efa",
+                )])
+                fig_vol_type.update_layout(
+                    title="Executed Volume by Agent Type",
+                    xaxis_title="Total Quantity Executed",
+                    yaxis_title="Agent Type",
+                    height=max(250, len(vol_by_type) * 50),
+                    margin={"l": 150, "r": 20, "t": 60, "b": 40},
+                )
+                st.plotly_chart(fig_vol_type, use_container_width=True)
+
+        with st.expander("Raw order logs"):
+            st.dataframe(order_df, use_container_width=True)
+    else:
+        st.warning("Order log data not available. Ensure the simulation includes agent logs.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4: AGENT ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_agents:
+    if result.agents:
+        agent_rows = [
+            {
+                "ID": a.agent_id,
+                "Type": a.agent_type,
+                "Name": a.agent_name,
+                "Starting Cash ($)": a.starting_cash_cents / 100,
+                "Mark-to-Market ($)": a.mark_to_market_cents / 100,
+                "P&L ($)": a.pnl_cents / 100,
+                "P&L (%)": round(a.pnl_pct, 4),
+            }
+            for a in result.agents
+        ]
+        agent_df = pd.DataFrame(agent_rows)
+
+        # ── Aggregate metrics ─────────────────────────────────────────────
+        st.markdown("#### Performance by Agent Type")
+
+        agg = (
+            agent_df.groupby("Type")
+            .agg(
+                Count=("ID", "count"),
+                **{"Win Rate (%)": ("P&L ($)", lambda x: (x > 0).mean() * 100)},
+                **{"Avg P&L ($)": ("P&L ($)", "mean")},
+                **{"Total P&L ($)": ("P&L ($)", "sum")},
+                **{"Std P&L ($)": ("P&L ($)", "std")},
+                **{"Avg P&L (%)": ("P&L (%)", "mean")},
+            )
+            .reset_index()
+        )
+        agg["Info Ratio"] = agg.apply(
+            lambda r: round(r["Avg P&L ($)"] / r["Std P&L ($)"], 4)
+            if pd.notna(r["Std P&L ($)"]) and r["Std P&L ($)"] > 0
+            else 0.0,
+            axis=1,
+        )
+        st.dataframe(agg, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        # ── P&L distribution box plot ─────────────────────────────────────
+        st.markdown("#### P&L Distribution by Type")
+        agent_type_list = sorted(agent_df["Type"].unique())
+        fig_box = go.Figure()
+        box_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2"]
+        for i, atype in enumerate(agent_type_list):
+            subset = agent_df[agent_df["Type"] == atype]["P&L ($)"]
+            fig_box.add_trace(go.Box(
+                y=subset, name=atype,
+                marker_color=box_colors[i % len(box_colors)],
+                boxmean="sd",
+            ))
+        fig_box.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_box.update_layout(
+            title="P&L Distribution by Agent Type",
+            yaxis_title="P&L ($)",
+            height=400,
+            margin={"l": 60, "r": 20, "t": 60, "b": 40},
+        )
+        st.plotly_chart(fig_box, use_container_width=True)
+
+        # ── Holdings breakdown ────────────────────────────────────────────
+        holdings_data = []
+        for a in result.agents:
+            for asset, qty in a.final_holdings.items():
+                if asset == "CASH":
+                    continue
+                holdings_data.append({
+                    "Type": a.agent_type,
+                    "Agent": a.agent_name,
+                    "Asset": asset,
+                    "Shares": qty,
+                })
+        if holdings_data:
+            st.markdown("#### Holdings by Agent Type")
+            hdf = pd.DataFrame(holdings_data)
+            hold_agg = hdf.groupby("Type").agg(
+                **{"Total Shares": ("Shares", "sum")},
+                **{"Avg Shares": ("Shares", "mean")},
+                **{"Min Shares": ("Shares", "min")},
+                **{"Max Shares": ("Shares", "max")},
+            ).reset_index()
+            st.dataframe(hold_agg, use_container_width=True, hide_index=True)
+
+        # ── Agent leaderboard ─────────────────────────────────────────────
+        st.markdown("#### Agent Leaderboard")
+        leaderboard = agent_df.sort_values("P&L ($)", ascending=False).reset_index(drop=True)
+        leaderboard.index = leaderboard.index + 1
+        leaderboard.index.name = "Rank"
+        st.dataframe(leaderboard, use_container_width=True)
+    else:
+        st.info("No agent data available.")
