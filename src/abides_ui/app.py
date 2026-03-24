@@ -391,8 +391,21 @@ bid = market.l1_close.bid_price_cents
 ask = market.l1_close.ask_price_cents
 mid_close = ((bid + ask) / 2 / 100) if bid is not None and ask is not None else None
 spread_close = ((ask - bid) / 100) if bid is not None and ask is not None else None
-vwap = market.liquidity.vwap_cents / 100 if market.liquidity.vwap_cents is not None else None
 volume = market.liquidity.total_exchanged_volume
+
+# Compute VWAP from executed order logs: sum(price*qty) / sum(qty)
+vwap = None
+if order_df is not None and len(order_df) > 0:
+    exec_mask = order_df["EventType"] == "ORDER_EXECUTED"
+    if "fill_price" in order_df.columns and "quantity" in order_df.columns:
+        ex = order_df.loc[exec_mask, ["fill_price", "quantity"]].dropna()
+        ex = ex[ex["quantity"] > 0]
+        if len(ex) > 0:
+            prices = pd.to_numeric(ex["fill_price"], errors="coerce")
+            qtys = pd.to_numeric(ex["quantity"], errors="coerce")
+            valid = prices.notna() & qtys.notna() & (qtys > 0)
+            if valid.any():
+                vwap = float((prices[valid] * qtys[valid]).sum() / qtys[valid].sum()) / 100
 
 realized_vol = None
 if log_returns is not None and len(log_returns) > 1:
@@ -405,13 +418,20 @@ if mid_series is not None:
         price_range = float(valid_mid.max() - valid_mid.min())
 
 m_cols = st.columns(7)
-m_cols[0].metric("Mid Price", f"${mid_close:,.2f}" if mid_close is not None else "N/A")
-m_cols[1].metric("Bid-Ask Spread", f"${spread_close:,.2f}" if spread_close is not None else "N/A")
-m_cols[2].metric("VWAP", f"${vwap:,.2f}" if vwap is not None else "N/A")
-m_cols[3].metric("Volume", f"{volume:,}")
-m_cols[4].metric("Realized Vol (σ)", f"{realized_vol:.6f}" if realized_vol is not None else "N/A")
-m_cols[5].metric("Price Range", f"${price_range:,.2f}" if price_range is not None else "N/A")
-m_cols[6].metric("Wall-clock", f"{wall_time:.1f}s")
+m_cols[0].metric("Mid Price", f"${mid_close:,.2f}" if mid_close is not None else "N/A",
+                 help="Midpoint of the best bid and ask at market close: (Bid + Ask) / 2.")
+m_cols[1].metric("Bid-Ask Spread", f"${spread_close:,.2f}" if spread_close is not None else "N/A",
+                 help="Difference between the best ask and best bid at close. Tighter spreads indicate higher liquidity.")
+m_cols[2].metric("VWAP", f"${vwap:,.2f}" if vwap is not None else "N/A",
+                 help="Volume-Weighted Average Price: Σ(price × qty) / Σ(qty) across all executed trades. Represents the average price paid per share.")
+m_cols[3].metric("Volume", f"{volume:,}",
+                 help="Total number of shares exchanged during the simulation (sum of all executed order quantities).")
+m_cols[4].metric("Realized Vol (σ)", f"{realized_vol:.6f}" if realized_vol is not None else "N/A",
+                 help="Standard deviation of log-returns of the mid-price series. Measures intra-session price volatility.")
+m_cols[5].metric("Price Range", f"${price_range:,.2f}" if price_range is not None else "N/A",
+                 help="Difference between the highest and lowest mid-price observed during the session (High − Low).")
+m_cols[6].metric("Wall-clock", f"{wall_time:.1f}s",
+                 help="Real-world elapsed time to run the simulation.")
 
 # ── Tabbed analytics ─────────────────────────────────────────────────────────
 
@@ -485,22 +505,32 @@ with tab_micro:
         spread_pct = (valid_spread / valid_mid_ms * 100).dropna() if len(valid_mid_ms) > 0 else pd.Series(dtype=float)
 
         sp_cols = st.columns(6)
-        sp_cols[0].metric("Mean Spread", f"${valid_spread.mean():.4f}" if len(valid_spread) > 0 else "N/A")
-        sp_cols[1].metric("Median Spread", f"${valid_spread.median():.4f}" if len(valid_spread) > 0 else "N/A")
-        sp_cols[2].metric("Max Spread", f"${valid_spread.max():.4f}" if len(valid_spread) > 0 else "N/A")
-        sp_cols[3].metric("Spread Std", f"${valid_spread.std():.4f}" if len(valid_spread) > 1 else "N/A")
-        sp_cols[4].metric("Mean Spread %", f"{spread_pct.mean():.4f}%" if len(spread_pct) > 0 else "N/A")
-        sp_cols[5].metric("Median Spread %", f"{spread_pct.median():.4f}%" if len(spread_pct) > 0 else "N/A")
+        sp_cols[0].metric("Mean Spread", f"${valid_spread.mean():.4f}" if len(valid_spread) > 0 else "N/A",
+                         help="Average bid-ask spread over all L1 snapshots. Lower values indicate tighter markets.")
+        sp_cols[1].metric("Median Spread", f"${valid_spread.median():.4f}" if len(valid_spread) > 0 else "N/A",
+                         help="Median bid-ask spread. Less sensitive to outlier spikes than the mean.")
+        sp_cols[2].metric("Max Spread", f"${valid_spread.max():.4f}" if len(valid_spread) > 0 else "N/A",
+                         help="Widest bid-ask spread observed. Large values may indicate liquidity gaps or stressed conditions.")
+        sp_cols[3].metric("Spread Std", f"${valid_spread.std():.4f}" if len(valid_spread) > 1 else "N/A",
+                         help="Standard deviation of the spread series. Measures how stable or volatile the spread is over time.")
+        sp_cols[4].metric("Mean Spread %", f"{spread_pct.mean():.4f}%" if len(spread_pct) > 0 else "N/A",
+                         help="Average spread as a percentage of mid-price: (Ask − Bid) / Mid × 100. Normalizes spread relative to price level.")
+        sp_cols[5].metric("Median Spread %", f"{spread_pct.median():.4f}%" if len(spread_pct) > 0 else "N/A",
+                         help="Median spread as a percentage of mid-price. Robust measure of relative transaction cost.")
 
         # ── Market quality ────────────────────────────────────────────────
         st.markdown("#### Market Quality")
         mq_cols = st.columns(4)
-        mq_cols[0].metric("% Time No Bid", f"{market.liquidity.pct_time_no_bid:.1f}%")
-        mq_cols[1].metric("% Time No Ask", f"{market.liquidity.pct_time_no_ask:.1f}%")
+        mq_cols[0].metric("% Time No Bid", f"{market.liquidity.pct_time_no_bid:.1f}%",
+                         help="Percentage of session time with no bid quote in the book. High values signal poor buy-side liquidity.")
+        mq_cols[1].metric("% Time No Ask", f"{market.liquidity.pct_time_no_ask:.1f}%",
+                         help="Percentage of session time with no ask quote in the book. High values signal poor sell-side liquidity.")
         both_sides = 100 - max(market.liquidity.pct_time_no_bid, market.liquidity.pct_time_no_ask)
-        mq_cols[2].metric("% Time Two-Sided", f"{both_sides:.1f}%")
+        mq_cols[2].metric("% Time Two-Sided", f"{both_sides:.1f}%",
+                         help="Percentage of session time where both a bid and an ask were present. Higher is better — indicates a tradeable market.")
         last_trade = market.liquidity.last_trade_cents
-        mq_cols[3].metric("Last Trade", f"${last_trade / 100:.2f}" if last_trade is not None else "N/A")
+        mq_cols[3].metric("Last Trade", f"${last_trade / 100:.2f}" if last_trade is not None else "N/A",
+                         help="Price of the last executed trade in the session.")
 
         st.divider()
 
@@ -590,11 +620,16 @@ with tab_flow:
         cancel_rate = (cancelled / total_orders * 100) if total_orders > 0 else 0
 
         of_cols = st.columns(5)
-        of_cols[0].metric("Total Orders Submitted", f"{total_orders:,}")
-        of_cols[1].metric("Executions", f"{executed:,}")
-        of_cols[2].metric("Cancellations", f"{cancelled:,}")
-        of_cols[3].metric("Fill Rate", f"{fill_rate:.1f}%")
-        of_cols[4].metric("Cancel Rate", f"{cancel_rate:.1f}%")
+        of_cols[0].metric("Total Orders Submitted", f"{total_orders:,}",
+                         help="Number of ORDER_SUBMITTED events. Each represents a new order entering the book.")
+        of_cols[1].metric("Executions", f"{executed:,}",
+                         help="Number of ORDER_EXECUTED events (full or partial fills). Each represents a trade.")
+        of_cols[2].metric("Cancellations", f"{cancelled:,}",
+                         help="Number of cancelled or partially cancelled orders that were removed before execution.")
+        of_cols[3].metric("Fill Rate", f"{fill_rate:.1f}%",
+                         help="Executions / Submitted × 100. Measures what fraction of orders resulted in a trade.")
+        of_cols[4].metric("Cancel Rate", f"{cancel_rate:.1f}%",
+                         help="Cancellations / Submitted × 100. High cancel rates are typical of market-making strategies.")
 
         st.divider()
 
@@ -619,12 +654,13 @@ with tab_flow:
 
             with c2:
                 if "side" in order_df.columns:
-                    submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
+                    submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"].copy()
+                    submitted["side"] = submitted["side"].astype(str)
                     side_counts = submitted["side"].value_counts()
                     fig_sides = go.Figure(data=[go.Bar(
                         x=side_counts.index.tolist(),
                         y=side_counts.values.tolist(),
-                        marker_color=["#2ca02c" if s == "BID" else "#d62728" for s in side_counts.index],
+                        marker_color=["#2ca02c" if "BID" in s else "#d62728" for s in side_counts.index],
                     )])
                     fig_sides.update_layout(
                         title="Order Side Balance (Submitted)",
@@ -640,7 +676,10 @@ with tab_flow:
             submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"].copy()
             if len(submitted) > 0:
                 submitted = submitted.sort_values("EventTime")
-                submitted["flow_sign"] = submitted["side"].map({"BID": 1, "ASK": -1}).fillna(0).astype(int)
+                submitted["side_str"] = submitted["side"].astype(str)
+                submitted["flow_sign"] = submitted["side_str"].apply(
+                    lambda s: 1 if "BID" in s else (-1 if "ASK" in s else 0)
+                ).astype(int)
                 submitted["cum_imbalance"] = submitted["flow_sign"].cumsum()
                 flow_time = pd.to_datetime(submitted["EventTime"], unit="ns")
 
