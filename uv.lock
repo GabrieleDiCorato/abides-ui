@@ -8,8 +8,8 @@ resolution-markers = [
 
 [[package]]
 name = "abides-hasufel"
-version = "2.1.0"
-source = { git = "https://github.com/GabrieleDiCorato/abides-jpmc-public.git?rev=v2.1.0#25b8fed5d06e32f9f3a678ebd47f4fa633cf0fa6" }
+version = "2.2.0"
+source = { git = "https://github.com/GabrieleDiCorato/abides-jpmc-public.git?rev=v2.2.0#2087e91bdefe06facb7b31072249bfeca790bdc0" }
 dependencies = [
     { name = "coloredlogs" },
     { name = "gymnasium" },
@@ -57,7 +57,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abides-hasufel", git = "https://github.com/GabrieleDiCorato/abides-jpmc-public.git?rev=v2.1.0" },
+    { name = "abides-hasufel", git = "https://github.com/GabrieleDiCorato/abides-jpmc-public.git?rev=v2.2.0" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pandas", specifier = ">=2.2.0,<3.0.0" },
     { name = "pandera", specifier = ">=0.22.0" },
