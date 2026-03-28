@@ -20,14 +20,16 @@ from abides_markets.config_system import (
     SimulationConfig,
     SimulationMeta,
     SparseMeanRevertingOracleConfig,
+    get_full_manifest,
     list_agent_types,
     list_templates,
+    validate_config,
 )
 from abides_markets.config_system.templates import get_template
 from abides_markets.simulation import ResultProfile, SimulationResult, run_simulation
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _default_market() -> MarketConfig:
     return MarketConfig(
@@ -78,6 +80,7 @@ def resolve_type(schema: dict) -> tuple[str, bool]:
 
 # ── Registry discovery ────────────────────────────────────────────────────────
 
+
 class TestRegistry:
     def test_list_agent_types_returns_nonempty(self):
         agents = list_agent_types()
@@ -92,6 +95,25 @@ class TestRegistry:
             assert "description" in a
             assert "parameters" in a
             assert isinstance(a["parameters"], dict)
+
+    def test_agent_type_v2_metadata(self):
+        """v2.2.0: agent types carry oracle/count/dependency metadata."""
+        agents = list_agent_types()
+        for a in agents:
+            assert "requires_oracle" in a, f"Missing requires_oracle on {a['name']}"
+            assert isinstance(a["requires_oracle"], bool)
+            if "typical_count_range" in a and a["typical_count_range"] is not None:
+                assert len(a["typical_count_range"]) == 2
+
+    def test_value_agent_requires_oracle(self):
+        agents = list_agent_types()
+        value = next(a for a in agents if a["name"] == "value")
+        assert value["requires_oracle"] is True
+
+    def test_noise_agent_does_not_require_oracle(self):
+        agents = list_agent_types()
+        noise = next(a for a in agents if a["name"] == "noise")
+        assert noise["requires_oracle"] is False
 
     def test_known_agent_types_present(self):
         names = {a["name"] for a in list_agent_types()}
@@ -119,7 +141,56 @@ class TestRegistry:
         assert "market" in config or "agents" in config
 
 
+# ── Manifest & validation (v2.2.0) ───────────────────────────────────────────
+
+
+class TestManifest:
+    def test_get_full_manifest_structure(self):
+        m = get_full_manifest()
+        assert "agent_types" in m
+        assert "templates" in m
+        assert "oracle_options" in m
+        assert "categories" in m
+
+    def test_manifest_oracle_options(self):
+        m = get_full_manifest()
+        oracle_types = [o.get("type") for o in m["oracle_options"]]
+        assert "sparse_mean_reverting" in oracle_types
+        assert None in oracle_types  # oracle-absent mode
+
+    def test_manifest_categories_present(self):
+        m = get_full_manifest()
+        assert len(m["categories"]) > 0
+
+
+class TestValidation:
+    def test_validate_valid_config(self):
+        cfg = _minimal_config()
+        result = validate_config(cfg.model_dump())
+        assert result.valid
+
+    def test_validate_unknown_agent_is_error(self):
+        cfg = SimulationConfig(
+            market=_default_market(),
+            agents={
+                "nonexistent_agent": AgentGroupConfig(enabled=True, count=5, params={}),
+            },
+            simulation=SimulationMeta(seed=42),
+        )
+        result = validate_config(cfg.model_dump())
+        assert not result.valid
+        assert any("nonexistent_agent" in e.message for e in result.errors)
+
+    def test_validation_issues_have_fields(self):
+        cfg = _minimal_config()
+        result = validate_config(cfg.model_dump())
+        for issue in result.errors + result.warnings:
+            assert hasattr(issue, "severity")
+            assert hasattr(issue, "message")
+
+
 # ── Type resolution (anyOf / nullable) ────────────────────────────────────────
+
 
 class TestTypeResolution:
     """Verify the JSON Schema type-resolution logic handles both patterns."""
@@ -141,17 +212,21 @@ class TestTypeResolution:
 
     def test_anyof_nullable(self):
         """Pydantic v2 pattern for int | None."""
-        pt, nullable = resolve_type({
-            "anyOf": [{"type": "integer"}, {"type": "null"}],
-            "default": None,
-        })
+        pt, nullable = resolve_type(
+            {
+                "anyOf": [{"type": "integer"}, {"type": "null"}],
+                "default": None,
+            }
+        )
         assert pt == "integer"
         assert nullable is True
 
     def test_anyof_non_nullable(self):
-        pt, nullable = resolve_type({
-            "anyOf": [{"type": "string"}],
-        })
+        pt, nullable = resolve_type(
+            {
+                "anyOf": [{"type": "string"}],
+            }
+        )
         assert pt == "string"
         assert nullable is False
 
@@ -168,10 +243,12 @@ class TestTypeResolution:
 
     def test_anyof_union_int_str_falls_back_to_string(self):
         """anyOf with multiple non-null types must resolve to string widget."""
-        pt, nullable = resolve_type({
-            "anyOf": [{"type": "integer"}, {"type": "string"}],
-            "default": "adaptive",
-        })
+        pt, nullable = resolve_type(
+            {
+                "anyOf": [{"type": "integer"}, {"type": "string"}],
+                "default": "adaptive",
+            }
+        )
         assert pt == "string"
         assert nullable is False
 
@@ -187,6 +264,7 @@ class TestTypeResolution:
 
 
 # ── Config construction ───────────────────────────────────────────────────────
+
 
 class TestConfigConstruction:
     def test_minimal_config_creates(self):
@@ -238,8 +316,37 @@ class TestConfigConstruction:
             config = get_template(t["name"])
             assert isinstance(config, dict), f"Template {t['name']} did not return dict"
 
+    def test_oracle_absent_config(self):
+        """Oracle-absent mode: oracle=None with opening_price."""
+        cfg = SimulationConfig(
+            market=MarketConfig(
+                ticker="ABM",
+                date="20210205",
+                start_time="09:30:00",
+                end_time="09:35:00",
+                oracle=None,
+                opening_price=100_000,
+                exchange=ExchangeConfig(),
+            ),
+            agents={
+                "noise": AgentGroupConfig(enabled=True, count=5, params={}),
+            },
+            simulation=SimulationMeta(seed=42),
+        )
+        assert cfg.market.oracle is None
+        assert cfg.market.opening_price == 100_000
+
+    def test_field_descriptions_present(self):
+        """v2.2.0: agent parameter schemas carry descriptions."""
+        agents = list_agent_types()
+        for a in agents:
+            for param_name, schema in a["parameters"].items():
+                desc = schema.get("description")
+                assert desc is not None and len(desc) > 0, f"Missing description for {a['name']}.{param_name}"
+
 
 # ── Simulation run ────────────────────────────────────────────────────────────
+
 
 @pytest.mark.slow
 class TestSimulationRun:
@@ -299,6 +406,26 @@ class TestSimulationRun:
         assert len(order_df) > 0
         assert "EventType" in order_df.columns
 
+    def test_summary_dict(self):
+        """v2.2.0: summary_dict() returns structured data for widgets."""
+        cfg = _minimal_config(seed=42)
+        result = run_simulation(cfg, profile=ResultProfile.SUMMARY)
+        summary = result.summary_dict()
+        assert isinstance(summary, dict)
+        assert "metadata" in summary
+        assert "markets" in summary
+        assert "ABM" in summary["markets"]
+        market_summary = summary["markets"]["ABM"]
+        assert "vwap_cents" in market_summary
+        assert "total_volume" in market_summary
+
+    def test_vwap_from_liquidity_metrics(self):
+        """v2.2.0: LiquidityMetrics carries vwap_cents directly."""
+        cfg = _minimal_config(seed=42)
+        result = run_simulation(cfg, profile=ResultProfile.SUMMARY)
+        market = result.markets["ABM"]
+        assert hasattr(market.liquidity, "vwap_cents")
+
     def test_order_logs_have_expected_columns(self):
         cfg = _minimal_config(seed=42)
         result = run_simulation(cfg, profile=ResultProfile.FULL)
@@ -354,7 +481,9 @@ class TestSimulationRun:
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
+
 class TestCLI:
     def test_cli_module_importable(self):
         from abides_ui._cli import main
+
         assert callable(main)
