@@ -161,21 +161,17 @@ with st.sidebar:
             step=1e-5,
             format="%.1e",
         )
-        kappa_oracle = st.number_input(
-            "Mean-reversion speed (κ)",
-            min_value=0.0,
-            value=tpl_oracle.get("kappa", 1.67e-16),
-            step=1e-17,
-            format="%.2e",
+        mean_reversion_half_life = st.text_input(
+            "Mean-reversion half-life",
+            value=tpl_oracle.get("mean_reversion_half_life", "48d"),
+            help="Duration string (e.g. '48d', '1152h'). Time for the fundamental price to revert halfway to r_bar.",
         )
 
         with st.expander("Megashock parameters"):
-            megashock_lambda_a = st.number_input(
-                "Arrival rate (λ)",
-                min_value=0.0,
-                value=tpl_oracle.get("megashock_lambda_a", 2.77778e-18),
-                step=1e-19,
-                format="%.5e",
+            megashock_mean_interval = st.text_input(
+                "Mean interval between shocks",
+                value=tpl_oracle.get("megashock_mean_interval", "100000h") or "",
+                help="Duration string (e.g. '100000h' ≈ 11.4 years). Leave empty to disable megashocks.",
             )
             megashock_mean = st.number_input(
                 "Mean",
@@ -434,9 +430,9 @@ def build_config() -> SimulationConfig:
     else:
         oracle_cfg = SparseMeanRevertingOracleConfig(
             r_bar=int(r_bar_dollars * 100),
-            kappa=kappa_oracle,
+            mean_reversion_half_life=mean_reversion_half_life,
             fund_vol=fund_vol,
-            megashock_lambda_a=megashock_lambda_a,
+            megashock_mean_interval=megashock_mean_interval if megashock_mean_interval.strip() else None,
             megashock_mean=megashock_mean,
             megashock_var=megashock_var,
         )
@@ -672,18 +668,21 @@ with tab_micro:
     if l1_df is not None and spread_series is not None and mid_series is not None:
         # ── Spread statistics ─────────────────────────────────────────────
         st.markdown("#### Spread Statistics")
-        valid_spread = spread_series.dropna()
+        # NaN spread = one-sided book (no bid or no ask) → not "missing" but infinite spread
+        n_total = len(spread_series)
+        two_sided = spread_series.dropna()
+        n_one_sided = n_total - len(two_sided)
         valid_mid_ms = mid_series.dropna()
-        spread_pct = (valid_spread / valid_mid_ms * 100).dropna() if len(valid_mid_ms) > 0 else pd.Series(dtype=float)
+        spread_pct = (two_sided / valid_mid_ms * 100).dropna() if len(valid_mid_ms) > 0 else pd.Series(dtype=float)
 
         sp_cols = st.columns(6)
-        sp_cols[0].metric("Mean Spread", f"${valid_spread.mean():.4f}" if len(valid_spread) > 0 else "N/A", help="Average bid-ask spread over all L1 snapshots. Lower values indicate tighter markets.")
-        sp_cols[1].metric("Median Spread", f"${valid_spread.median():.4f}" if len(valid_spread) > 0 else "N/A", help="Median bid-ask spread. Less sensitive to outlier spikes than the mean.")
+        sp_cols[0].metric("Mean Spread", f"${two_sided.mean():.4f}" if len(two_sided) > 0 else "N/A", help="Average bid-ask spread over two-sided L1 snapshots. Lower values indicate tighter markets.")
+        sp_cols[1].metric("Median Spread", f"${two_sided.median():.4f}" if len(two_sided) > 0 else "N/A", help="Median bid-ask spread. Less sensitive to outlier spikes than the mean.")
         sp_cols[2].metric(
-            "Max Spread", f"${valid_spread.max():.4f}" if len(valid_spread) > 0 else "N/A", help="Widest bid-ask spread observed. Large values may indicate liquidity gaps or stressed conditions."
+            "Max Spread", f"${two_sided.max():.4f}" if len(two_sided) > 0 else "N/A", help="Widest bid-ask spread observed. Large values may indicate liquidity gaps or stressed conditions."
         )
         sp_cols[3].metric(
-            "Spread Std", f"${valid_spread.std():.4f}" if len(valid_spread) > 1 else "N/A", help="Standard deviation of the spread series. Measures how stable or volatile the spread is over time."
+            "Spread Std", f"${two_sided.std():.4f}" if len(two_sided) > 1 else "N/A", help="Standard deviation of the spread series. Measures how stable or volatile the spread is over time."
         )
         sp_cols[4].metric(
             "Mean Spread %",
@@ -693,6 +692,8 @@ with tab_micro:
         sp_cols[5].metric(
             "Median Spread %", f"{spread_pct.median():.4f}%" if len(spread_pct) > 0 else "N/A", help="Median spread as a percentage of mid-price. Robust measure of relative transaction cost."
         )
+        if n_one_sided > 0:
+            st.caption(f"⚠️ {n_one_sided} of {n_total} L1 ticks ({n_one_sided / n_total * 100:.1f}%) had a one-sided book (no bid or no ask). Spread statistics above reflect only two-sided intervals.")
 
         # ── Market quality ────────────────────────────────────────────────
         st.markdown("#### Market Quality")
@@ -736,12 +737,12 @@ with tab_micro:
 
         # ── Book pressure ─────────────────────────────────────────────────
         st.markdown("#### Book Pressure")
-        bid_qty = pd.to_numeric(l1_df["bid_qty"], errors="coerce")
-        ask_qty = pd.to_numeric(l1_df["ask_qty"], errors="coerce")
+        bid_qty = pd.to_numeric(l1_df["bid_qty"], errors="coerce").fillna(0)
+        ask_qty = pd.to_numeric(l1_df["ask_qty"], errors="coerce").fillna(0)
         pressure = bid_qty - ask_qty
 
         fig_pressure = go.Figure()
-        colors = ["#2ca02c" if v >= 0 else "#d62728" for v in pressure.fillna(0)]
+        colors = ["#2ca02c" if v >= 0 else "#d62728" for v in pressure]
         fig_pressure.add_trace(
             go.Bar(
                 x=time_col,

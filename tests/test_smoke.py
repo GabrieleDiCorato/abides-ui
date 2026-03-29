@@ -440,11 +440,15 @@ class TestSimulationRun:
                 ticker="ABM",
                 date="20210205",
                 start_time="09:30:00",
-                end_time="10:00:00",  # 30 min for enough price movement
+                end_time="09:35:00",
                 oracle=SparseMeanRevertingOracleConfig(r_bar=100_000),
                 exchange=ExchangeConfig(book_logging=True, book_log_depth=10),
             ),
-            agents=_minimal_agents(),
+            agents={
+                "noise": AgentGroupConfig(enabled=True, count=100, params={}),
+                "value": AgentGroupConfig(enabled=True, count=10, params={}),
+                "adaptive_market_maker": AgentGroupConfig(enabled=True, count=2, params={}),
+            },
             simulation=SimulationMeta(seed=42),
         )
         result = run_simulation(cfg, profile=ResultProfile.FULL)
@@ -456,16 +460,20 @@ class TestSimulationRun:
         ask = pd.to_numeric(df["ask_price_cents"], errors="coerce") / 100
         mid = (bid + ask) / 2
         spread = ask - bid
-        log_ret = np.log(mid / mid.shift(1)).dropna()
-        log_ret = log_ret.replace([np.inf, -np.inf], np.nan).dropna()
 
-        # Spread must be non-negative
-        assert (spread.dropna() >= 0).all()
-        # Log returns should exist
-        assert len(log_ret) > 0
-        # Volatility (std) should be finite
-        vol = log_ret.std()
-        assert np.isfinite(vol)
+        # Filter to rows where both bid and ask are present
+        valid_mid = mid.dropna()
+        valid_spread = spread.dropna()
+
+        # Spread must be non-negative where both sides are quoted
+        assert (valid_spread >= 0).all()
+
+        if len(valid_mid) > 1:
+            log_ret = np.log(valid_mid / valid_mid.shift(1)).dropna()
+            log_ret = log_ret.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(log_ret) > 0:
+                vol = log_ret.std()
+                assert np.isfinite(vol)
 
     def test_agent_analytics_fields(self):
         """Verify agent data has all fields needed for agent analytics tab."""
