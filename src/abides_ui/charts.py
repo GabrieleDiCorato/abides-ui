@@ -162,9 +162,7 @@ def cumulative_imbalance(flow_time: pd.Series, cum_imbalance: pd.Series) -> go.F
 
 
 def volume_by_agent_type(vol_by_type: pd.Series) -> go.Figure:
-    fig = go.Figure(
-        data=[go.Bar(x=vol_by_type.values.tolist(), y=vol_by_type.index.tolist(), orientation="h", marker_color="#636efa")]
-    )
+    fig = go.Figure(data=[go.Bar(x=vol_by_type.values.tolist(), y=vol_by_type.index.tolist(), orientation="h", marker_color="#636efa")])
     fig.update_layout(
         title="Executed Volume by Agent Type",
         xaxis_title="Total Quantity Executed",
@@ -193,5 +191,132 @@ def pnl_box_plot(agent_df: pd.DataFrame) -> go.Figure:
         yaxis_title="P&L ($)",
         height=400,
         margin={"l": 60, "r": 20, "t": 60, "b": 40},
+    )
+    return fig
+
+
+# ── Execution Analytics (v2.5.0) ─────────────────────────────────────────────
+
+
+def equity_curve(ec_df: pd.DataFrame, agent_name: str) -> go.Figure:
+    """NAV over time with peak watermark and drawdown shading."""
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=ec_df["time"],
+            y=ec_df["Peak NAV ($)"],
+            mode="lines",
+            name="Peak NAV",
+            line={"color": "rgba(100,100,100,0.4)", "width": 1, "dash": "dot"},
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=ec_df["time"],
+            y=ec_df["NAV ($)"],
+            mode="lines",
+            name="NAV",
+            line={"color": "#1f77b4", "width": 2},
+            fill="tonexty",
+            fillcolor="rgba(255, 0, 0, 0.08)",
+        )
+    )
+    fig.update_layout(
+        title=f"Equity Curve — {agent_name}",
+        xaxis_title="Time",
+        yaxis_title="NAV ($)",
+        hovermode="x unified",
+        height=350,
+        margin={"l": 60, "r": 20, "t": 60, "b": 40},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+    )
+    return fig
+
+
+def slippage_comparison(exec_agents_data: list[dict]) -> go.Figure:
+    """Bar chart comparing VWAP slippage across execution agents."""
+    names = [d["name"] for d in exec_agents_data]
+    slippages = [d["vwap_slippage_bps"] for d in exec_agents_data]
+    colors = ["#2ca02c" if s <= 0 else "#d62728" for s in slippages]
+    fig = go.Figure(data=[go.Bar(x=names, y=slippages, marker_color=colors)])
+    fig.add_hline(y=0, line_dash="dash", line_color="gray")
+    fig.update_layout(
+        title="VWAP Slippage by Execution Agent",
+        xaxis_title="Agent",
+        yaxis_title="Slippage (bps)",
+        height=350,
+        margin={"l": 60, "r": 20, "t": 60, "b": 40},
+    )
+    return fig
+
+
+# ── Trade Attribution (v2.5.0) ────────────────────────────────────────────────
+
+
+def maker_taker_volume(maker_vol: pd.Series, taker_vol: pd.Series) -> go.Figure:
+    """Grouped bar chart: maker vs taker volume by agent type."""
+    all_types = sorted(set(maker_vol.index) | set(taker_vol.index))
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=all_types,
+            y=[int(maker_vol.get(t, 0)) for t in all_types],
+            name="Maker (passive)",
+            marker_color="#2ca02c",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=all_types,
+            y=[int(taker_vol.get(t, 0)) for t in all_types],
+            name="Taker (aggressive)",
+            marker_color="#d62728",
+        )
+    )
+    fig.update_layout(
+        title="Trade Volume: Maker vs Taker by Agent Type",
+        xaxis_title="Agent Type",
+        yaxis_title="Volume (shares)",
+        barmode="group",
+        height=400,
+        margin={"l": 60, "r": 20, "t": 60, "b": 40},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
+    )
+    return fig
+
+
+def trade_price_scatter(attr_df: pd.DataFrame) -> go.Figure:
+    """Scatter of trade prices over time, colored by side."""
+    buys = attr_df[attr_df["side"].str.upper().str.contains("BID|BUY")]
+    sells = attr_df[~attr_df.index.isin(buys.index)]
+    fig = go.Figure()
+    if len(buys) > 0:
+        fig.add_trace(
+            go.Scattergl(
+                x=buys["time"],
+                y=buys["price ($)"],
+                mode="markers",
+                name="Buy",
+                marker={"color": "#2ca02c", "size": 3, "opacity": 0.6},
+            )
+        )
+    if len(sells) > 0:
+        fig.add_trace(
+            go.Scattergl(
+                x=sells["time"],
+                y=sells["price ($)"],
+                mode="markers",
+                name="Sell",
+                marker={"color": "#d62728", "size": 3, "opacity": 0.6},
+            )
+        )
+    fig.update_layout(
+        title="Trade Prices Over Time (by Side)",
+        xaxis_title="Time",
+        yaxis_title="Price ($)",
+        hovermode="x unified",
+        height=400,
+        margin={"l": 60, "r": 20, "t": 60, "b": 40},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "right", "x": 1},
     )
     return fig

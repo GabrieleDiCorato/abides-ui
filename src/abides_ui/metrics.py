@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from abides_markets.simulation import SimulationResult
+from abides_markets.simulation.result import AgentData, TradeAttribution
 
 # ── L1 series derivation ─────────────────────────────────────────────────────
 
@@ -231,8 +232,9 @@ def compute_cumulative_imbalance(order_df: pd.DataFrame) -> pd.DataFrame | None:
 
 
 def build_agent_dataframe(result: SimulationResult) -> pd.DataFrame:
-    rows = [
-        {
+    rows = []
+    for a in result.agents:
+        row: dict[str, object] = {
             "ID": a.agent_id,
             "Type": a.agent_type,
             "Name": a.agent_name,
@@ -241,8 +243,13 @@ def build_agent_dataframe(result: SimulationResult) -> pd.DataFrame:
             "P&L ($)": a.pnl_cents / 100,
             "P&L (%)": round(a.pnl_pct, 4),
         }
-        for a in result.agents
-    ]
+        if a.execution_metrics is not None:
+            em = a.execution_metrics
+            row["Fill Rate (%)"] = round(em.fill_rate_pct, 2) if em.fill_rate_pct is not None else None
+            row["VWAP Slippage (bps)"] = round(em.vwap_slippage_bps, 2) if em.vwap_slippage_bps is not None else None
+            row["Participation (%)"] = round(em.participation_rate_pct, 2) if em.participation_rate_pct is not None else None
+            row["Impl. Shortfall (bps)"] = round(em.implementation_shortfall_bps, 2) if em.implementation_shortfall_bps is not None else None
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -308,3 +315,113 @@ def extract_order_log(result: SimulationResult) -> pd.DataFrame | None:
         return df
     except Exception:
         return None
+
+
+# ── Execution analytics (v2.5.0) ─────────────────────────────────────────────
+
+
+def get_execution_agents(result: SimulationResult) -> list[AgentData]:
+    """Return agents that have execution metrics (POV / TWAP / VWAP)."""
+    return [a for a in result.agents if a.execution_metrics is not None]
+
+
+@dataclass
+class ExecutionSummary:
+    total_target: int
+    total_filled: int
+    avg_fill_rate: float
+    avg_vwap_slippage_bps: float
+    max_drawdown_cents: int | None
+
+
+def compute_execution_summary(exec_agents: list[AgentData]) -> ExecutionSummary | None:
+    if not exec_agents:
+        return None
+    total_target = sum(a.execution_metrics.target_quantity for a in exec_agents)  # type: ignore[union-attr]
+    total_filled = sum(a.execution_metrics.filled_quantity for a in exec_agents)  # type: ignore[union-attr]
+    rates = [a.execution_metrics.fill_rate_pct for a in exec_agents if a.execution_metrics and a.execution_metrics.fill_rate_pct is not None]  # type: ignore[union-attr]
+    slippages = [a.execution_metrics.vwap_slippage_bps for a in exec_agents if a.execution_metrics and a.execution_metrics.vwap_slippage_bps is not None]  # type: ignore[union-attr]
+    drawdowns = [a.equity_curve.max_drawdown_cents for a in exec_agents if a.equity_curve is not None]
+    return ExecutionSummary(
+        total_target=total_target,
+        total_filled=total_filled,
+        avg_fill_rate=sum(rates) / len(rates) if rates else 0.0,
+        avg_vwap_slippage_bps=sum(slippages) / len(slippages) if slippages else 0.0,
+        max_drawdown_cents=max(drawdowns) if drawdowns else None,
+    )
+
+
+def build_execution_detail_df(agent: AgentData) -> pd.DataFrame:
+    """Build a single-row DataFrame of execution quality metrics for one agent."""
+    em = agent.execution_metrics
+    if em is None:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "Target Qty": em.target_quantity,
+                "Filled Qty": em.filled_quantity,
+                "Fill Rate (%)": round(em.fill_rate_pct, 2) if em.fill_rate_pct is not None else None,
+                "Avg Fill Price ($)": em.avg_fill_price_cents / 100 if em.avg_fill_price_cents is not None else None,
+                "VWAP ($)": em.vwap_cents / 100 if em.vwap_cents is not None else None,
+                "VWAP Slippage (bps)": round(em.vwap_slippage_bps, 2) if em.vwap_slippage_bps is not None else None,
+                "Participation (%)": round(em.participation_rate_pct, 2) if em.participation_rate_pct is not None else None,
+                "Arrival Price ($)": em.arrival_price_cents / 100 if em.arrival_price_cents is not None else None,
+                "Impl. Shortfall (bps)": round(em.implementation_shortfall_bps, 2) if em.implementation_shortfall_bps is not None else None,
+            }
+        ]
+    )
+
+
+def build_equity_curve_df(agent: AgentData) -> pd.DataFrame | None:
+    """Convert an agent's EquityCurve to a time-indexed DataFrame."""
+    ec = agent.equity_curve
+    if ec is None or len(ec.times_ns) == 0:
+        return None
+    return pd.DataFrame(
+        {
+            "time": pd.to_datetime(ec.times_ns, unit="ns"),
+            "NAV ($)": [c / 100 for c in ec.nav_cents],
+            "Peak NAV ($)": [c / 100 for c in ec.peak_nav_cents],
+        }
+    )
+
+
+# ── Trade attribution (v2.5.0) ────────────────────────────────────────────────
+
+
+def build_trade_attribution_df(
+    trades: list[TradeAttribution],
+    agents: list[AgentData],
+) -> pd.DataFrame:
+    """Turn raw TradeAttribution list into an analytical DataFrame."""
+    id_to_type = {a.agent_id: a.agent_type for a in agents}
+    rows = [
+        {
+            "time": pd.Timestamp(t.time_ns, unit="ns"),
+            "price ($)": t.price_cents / 100,
+            "quantity": t.quantity,
+            "side": t.side,
+            "maker_id": t.passive_agent_id,
+            "taker_id": t.aggressive_agent_id,
+            "maker_type": id_to_type.get(t.passive_agent_id, "unknown"),
+            "taker_type": id_to_type.get(t.aggressive_agent_id, "unknown"),
+        }
+        for t in trades
+    ]
+    return pd.DataFrame(rows)
+
+
+@dataclass
+class MakerTakerSummary:
+    total_trades: int
+    maker_volume_by_type: pd.Series
+    taker_volume_by_type: pd.Series
+
+
+def compute_maker_taker_summary(attr_df: pd.DataFrame) -> MakerTakerSummary:
+    return MakerTakerSummary(
+        total_trades=len(attr_df),
+        maker_volume_by_type=attr_df.groupby("maker_type")["quantity"].sum().sort_values(ascending=False),
+        taker_volume_by_type=attr_df.groupby("taker_type")["quantity"].sum().sort_values(ascending=False),
+    )
