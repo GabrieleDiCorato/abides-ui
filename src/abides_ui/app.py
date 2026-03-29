@@ -89,6 +89,14 @@ with st.sidebar:
         tpl_agents = {}
         tpl_sim = {}
 
+    # Reset agent widget states when template changes so new defaults apply
+    if st.session_state.get("_prev_template") != selected_template:
+        st.session_state["_prev_template"] = selected_template
+        for k in list(st.session_state):
+            if k.startswith(("enabled_", "count_", "param_")):
+                del st.session_state[k]
+        st.rerun()
+
     st.divider()
 
     # ── Market settings ───────────────────────────────────────────────────────
@@ -103,6 +111,15 @@ with st.sidebar:
     if seed_default == "random":
         seed_default = 42
     seed = st.number_input("Random seed", min_value=0, value=seed_default, step=1)
+
+    st.divider()
+
+    # ── Result profile ────────────────────────────────────────────────────────
+    include_raw_logs = st.toggle(
+        "Include raw agent logs",
+        value=False,
+        help="Enable to include per-agent order logs (slower). Needed for Order Flow tab.",
+    )
 
     st.divider()
 
@@ -214,10 +231,7 @@ _sorted_agents = sorted(
     agent_types,
     key=lambda a: category_meta.get(a["category"], {}).get("sort_order", 99),
 )
-_grouped_agents: list[tuple[str, list[dict[str, Any]]]] = [
-    (cat, list(grp))
-    for cat, grp in _groupby(_sorted_agents, key=lambda a: a["category"])
-]
+_grouped_agents: list[tuple[str, list[dict[str, Any]]]] = [(cat, list(grp)) for cat, grp in _groupby(_sorted_agents, key=lambda a: a["category"])]
 
 for cat_key, cat_agents in _grouped_agents:
     cat_info = category_meta.get(cat_key, {})
@@ -267,25 +281,25 @@ for cat_key, cat_agents in _grouped_agents:
 
             enabled = st.toggle("Enabled", value=tpl_enabled, key=f"enabled_{agent_name}")
 
-            if enabled:
-                count_default = max(tpl_count, 1)
-                if typical_count and tpl_count == 0:
-                    count_default = typical_count[0]
-                count = st.number_input(
-                    "Count",
-                    min_value=1,
-                    value=count_default,
-                    step=1,
-                    key=f"count_{agent_name}",
-                    label_visibility="collapsed",
-                    help=f"Typical range: {typical_count[0]}–{typical_count[1]}" if typical_count else None,
-                )
+            count_default = max(tpl_count, 1)
+            if typical_count and tpl_count == 0:
+                count_default = typical_count[0]
+            count = st.number_input(
+                "Count",
+                min_value=1,
+                value=count_default,
+                step=1,
+                key=f"count_{agent_name}",
+                label_visibility="collapsed",
+                help=f"Typical range: {typical_count[0]}–{typical_count[1]}" if typical_count else None,
+            )
 
-                # Render per-agent parameter inputs in compact table layout
-                agent_params: dict[str, Any] = {}
-                visible_params = {k: v for k, v in param_schema.items() if k not in HIDDEN_PARAMS}
+            # Render per-agent parameter inputs in a collapsible section
+            agent_params: dict[str, Any] = {}
+            visible_params = {k: v for k, v in param_schema.items() if k not in HIDDEN_PARAMS}
 
-                if visible_params:
+            if visible_params:
+                with st.expander("⚙️ Parameters", expanded=False):
                     for param_name, schema in visible_params.items():
                         default = tpl_params.get(param_name, schema.get("default"))
 
@@ -396,6 +410,31 @@ for cat_key, cat_agents in _grouped_agents:
                             if val or not nullable:
                                 agent_params[param_name] = val
 
+                        elif param_type == "array":
+                            arr_default = ", ".join(str(v) for v in default) if isinstance(default, list) else (str(default) if default is not None else "")
+                            raw = val_col.text_input(
+                                display_label,
+                                value=arr_default,
+                                key=widget_key,
+                                label_visibility="collapsed",
+                                help="Comma-separated values" + (f" — {field_help}" if field_help else ""),
+                            )
+                            if raw.strip():
+                                items_schema = schema.get("items", {})
+                                item_type = items_schema.get("type", "string")
+                                try:
+                                    parts = [p.strip() for p in raw.split(",") if p.strip()]
+                                    if item_type == "number":
+                                        agent_params[param_name] = [float(p) for p in parts]
+                                    elif item_type == "integer":
+                                        agent_params[param_name] = [int(p) for p in parts]
+                                    else:
+                                        agent_params[param_name] = parts
+                                except ValueError:
+                                    agent_params[param_name] = raw
+                            elif not nullable:
+                                agent_params[param_name] = []
+
                         else:
                             str_default = str(default) if default is not None else ""
                             val = val_col.text_input(
@@ -407,6 +446,7 @@ for cat_key, cat_agents in _grouped_agents:
                             if val or not nullable:
                                 agent_params[param_name] = val
 
+            if enabled:
                 agent_configs[agent_name] = AgentGroupConfig(
                     enabled=True,
                     count=count,
@@ -477,7 +517,8 @@ if run_clicked:
 
     with st.spinner("Running simulation…"):
         t0 = time.perf_counter()
-        result: SimulationResult = run_simulation(config, profile=ResultProfile.FULL)
+        _profile = ResultProfile.FULL if include_raw_logs else ResultProfile.QUANT
+        result: SimulationResult = run_simulation(config, profile=_profile)
         wall_time = time.perf_counter() - t0
     st.session_state["result"] = result
     st.session_state["wall_time"] = wall_time
@@ -512,11 +553,19 @@ sm = metrics.compute_summary(market, l1)
 
 m_cols = st.columns(7)
 m_cols[0].metric("Mid Price", f"${sm.mid_close:,.2f}" if sm.mid_close is not None else "N/A", help="Midpoint of the best bid and ask at market close: (Bid + Ask) / 2.")
-m_cols[1].metric("Bid-Ask Spread", f"${sm.spread_close:,.2f}" if sm.spread_close is not None else "N/A", help="Difference between the best ask and best bid at close. Tighter spreads indicate higher liquidity.")
-m_cols[2].metric("VWAP", f"${sm.vwap:,.2f}" if sm.vwap is not None else "N/A", help="Volume-Weighted Average Price: Σ(price × qty) / Σ(qty) across all executed trades. Represents the average price paid per share.")
+m_cols[1].metric(
+    "Bid-Ask Spread", f"${sm.spread_close:,.2f}" if sm.spread_close is not None else "N/A", help="Difference between the best ask and best bid at close. Tighter spreads indicate higher liquidity."
+)
+m_cols[2].metric(
+    "VWAP", f"${sm.vwap:,.2f}" if sm.vwap is not None else "N/A", help="Volume-Weighted Average Price: Σ(price × qty) / Σ(qty) across all executed trades. Represents the average price paid per share."
+)
 m_cols[3].metric("Volume", f"{sm.volume:,}", help="Total number of shares exchanged during the simulation (sum of all executed order quantities).")
-m_cols[4].metric("Realized Vol (σ)", f"{sm.realized_vol:.6f}" if sm.realized_vol is not None else "N/A", help="Standard deviation of log-returns of the mid-price series. Measures intra-session price volatility.")
-m_cols[5].metric("Price Range", f"${sm.price_range:,.2f}" if sm.price_range is not None else "N/A", help="Difference between the highest and lowest mid-price observed during the session (High − Low).")
+m_cols[4].metric(
+    "Realized Vol (σ)", f"{sm.realized_vol:.6f}" if sm.realized_vol is not None else "N/A", help="Standard deviation of log-returns of the mid-price series. Measures intra-session price volatility."
+)
+m_cols[5].metric(
+    "Price Range", f"${sm.price_range:,.2f}" if sm.price_range is not None else "N/A", help="Difference between the highest and lowest mid-price observed during the session (High − Low)."
+)
 m_cols[6].metric("Wall-clock", f"{wall_time:.1f}s", help="Real-world elapsed time to run the simulation.")
 
 summary_warnings = summary.get("warnings", [])
@@ -527,7 +576,7 @@ if summary_warnings:
 
 # ── Tabbed analytics ─────────────────────────────────────────────────────────
 
-tab_overview, tab_micro, tab_flow, tab_agents = st.tabs(["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics"])
+tab_overview, tab_micro, tab_flow, tab_agents, tab_exec = st.tabs(["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics", "⚡ Execution Analytics"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: MARKET OVERVIEW
@@ -561,10 +610,18 @@ with tab_micro:
         sp_cols[1].metric("Median Spread", f"${ss.median:.4f}" if ss.median is not None else "N/A", help="Median bid-ask spread. Less sensitive to outlier spikes than the mean.")
         sp_cols[2].metric("Max Spread", f"${ss.max:.4f}" if ss.max is not None else "N/A", help="Widest bid-ask spread observed. Large values may indicate liquidity gaps or stressed conditions.")
         sp_cols[3].metric("Spread Std", f"${ss.std:.4f}" if ss.std is not None else "N/A", help="Standard deviation of the spread series. Measures how stable or volatile the spread is over time.")
-        sp_cols[4].metric("Mean Spread %", f"{ss.mean_pct:.4f}%" if ss.mean_pct is not None else "N/A", help="Average spread as a percentage of mid-price: (Ask − Bid) / Mid × 100. Normalizes spread relative to price level.")
-        sp_cols[5].metric("Median Spread %", f"{ss.median_pct:.4f}%" if ss.median_pct is not None else "N/A", help="Median spread as a percentage of mid-price. Robust measure of relative transaction cost.")
+        sp_cols[4].metric(
+            "Mean Spread %",
+            f"{ss.mean_pct:.4f}%" if ss.mean_pct is not None else "N/A",
+            help="Average spread as a percentage of mid-price: (Ask − Bid) / Mid × 100. Normalizes spread relative to price level.",
+        )
+        sp_cols[5].metric(
+            "Median Spread %", f"{ss.median_pct:.4f}%" if ss.median_pct is not None else "N/A", help="Median spread as a percentage of mid-price. Robust measure of relative transaction cost."
+        )
         if ss.n_one_sided > 0:
-            st.caption(f"⚠️ {ss.n_one_sided} of {ss.n_total} L1 ticks ({ss.n_one_sided / ss.n_total * 100:.1f}%) had a one-sided book (no bid or no ask). Spread statistics above reflect only two-sided intervals.")
+            st.caption(
+                f"⚠️ {ss.n_one_sided} of {ss.n_total} L1 ticks ({ss.n_one_sided / ss.n_total * 100:.1f}%) had a one-sided book (no bid or no ask). Spread statistics above reflect only two-sided intervals."
+            )
 
         # ── Market quality ────────────────────────────────────────────────
         st.markdown("#### Market Quality")
@@ -601,7 +658,28 @@ with tab_micro:
             ret_cols[2].metric("Skewness", f"{rs.skewness:.4f}")
             ret_cols[3].metric("Excess Kurtosis", f"{rs.kurtosis:.4f}")
             st.plotly_chart(charts.returns_histogram(l1.log_returns), width="stretch")
-    else:
+
+    # ── Trade attribution (outside L1 guard — uses market.trades) ─────
+    if market.trades is not None and len(market.trades) > 0:
+        st.divider()
+        st.markdown("#### Trade Attribution")
+        attr_df = metrics.build_trade_attribution_df(market.trades, result.agents)
+        mts = metrics.compute_maker_taker_summary(attr_df)
+
+        ta_cols = st.columns(3)
+        ta_cols[0].metric("Total Trades", f"{mts.total_trades:,}", help="Number of individual trade executions with causal attribution.")
+        maker_types = len(mts.maker_volume_by_type)
+        taker_types = len(mts.taker_volume_by_type)
+        ta_cols[1].metric("Maker Types", f"{maker_types}", help="Number of distinct agent types acting as passive (maker) side.")
+        ta_cols[2].metric("Taker Types", f"{taker_types}", help="Number of distinct agent types acting as aggressive (taker) side.")
+
+        st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), width="stretch")
+        st.plotly_chart(charts.trade_price_scatter(attr_df), width="stretch")
+
+        with st.expander("Raw trade attribution data"):
+            st.dataframe(attr_df, width="stretch")
+
+    if l1 is None and (market.trades is None or len(market.trades) == 0):
         st.warning("L1 series data is required for microstructure analysis.")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -655,7 +733,7 @@ with tab_flow:
         with st.expander("Raw order logs"):
             st.dataframe(order_df, width="stretch")
     else:
-        st.warning("Order log data not available. Ensure the simulation includes agent logs.")
+        st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: AGENT ANALYTICS
@@ -687,3 +765,56 @@ with tab_agents:
         st.dataframe(metrics.build_leaderboard(agent_df), width="stretch")
     else:
         st.info("No agent data available.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5: EXECUTION ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_exec:
+    exec_agents = metrics.get_execution_agents(result)
+
+    if exec_agents:
+        exec_summary = metrics.compute_execution_summary(exec_agents)
+
+        # ── Hero metrics row ──────────────────────────────────────────────
+        st.markdown("#### Execution Quality Overview")
+        if exec_summary is not None:
+            ex_cols = st.columns(5)
+            ex_cols[0].metric("Execution Agents", f"{len(exec_agents)}", help="Number of agents with execution analytics (POV, TWAP, VWAP).")
+            ex_cols[1].metric("Total Filled", f"{exec_summary.total_filled:,} / {exec_summary.total_target:,}", help="Total shares filled vs target across all execution agents.")
+            ex_cols[2].metric("Avg Fill Rate", f"{exec_summary.avg_fill_rate:.1f}%", help="Average fill rate across execution agents.")
+            ex_cols[3].metric("Avg VWAP Slippage", f"{exec_summary.avg_vwap_slippage_bps:.2f} bps", help="Average slippage relative to market VWAP, in basis points. Negative means better than VWAP.")
+            if exec_summary.max_drawdown_cents is not None:
+                ex_cols[4].metric("Max Drawdown", f"${exec_summary.max_drawdown_cents / 100:,.2f}", help="Largest peak-to-trough NAV decline across all execution agents.")
+            else:
+                ex_cols[4].metric("Max Drawdown", "N/A", help="No equity curve data available.")
+
+        st.divider()
+
+        # ── Per-agent detail sections ─────────────────────────────────────
+        for agent in exec_agents:
+            with st.expander(f"**{agent.agent_name}** ({agent.agent_type})", expanded=len(exec_agents) <= 3):
+                detail_df = metrics.build_execution_detail_df(agent)
+                if len(detail_df) > 0:
+                    st.dataframe(detail_df, width="stretch", hide_index=True)
+
+                ec_df = metrics.build_equity_curve_df(agent)
+                if ec_df is not None:
+                    st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width="stretch")
+                else:
+                    st.caption("No equity curve data for this agent.")
+
+        # ── Comparative slippage chart ────────────────────────────────────
+        if len(exec_agents) > 1:
+            st.divider()
+            st.markdown("#### Slippage Comparison")
+            slip_data = [
+                {
+                    "name": a.agent_name,
+                    "vwap_slippage_bps": a.execution_metrics.vwap_slippage_bps or 0.0,  # type: ignore[union-attr]
+                }
+                for a in exec_agents
+            ]
+            st.plotly_chart(charts.slippage_comparison(slip_data), width="stretch")
+    else:
+        st.info("No execution agents in this simulation. Add a POV, TWAP, or VWAP execution agent to see analytics.")
