@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from itertools import groupby as _groupby
 from typing import Any
 
 import numpy as np
@@ -212,187 +213,209 @@ HIDDEN_PARAMS = {
 # Collect agent configs from UI
 agent_configs: dict[str, AgentGroupConfig] = {}
 
-cols_per_row = 2
-agent_cols = st.columns(cols_per_row)
+# Group agents by category and sort categories by importance (sort_order)
+_sorted_agents = sorted(
+    agent_types,
+    key=lambda a: category_meta.get(a["category"], {}).get("sort_order", 99),
+)
+_grouped_agents: list[tuple[str, list[dict[str, Any]]]] = [
+    (cat, list(grp))
+    for cat, grp in _groupby(_sorted_agents, key=lambda a: a["category"])
+]
 
-for idx, agent_info in enumerate(agent_types):
-    agent_name: str = agent_info["name"]
-    category: str = agent_info["category"]
-    description: str = agent_info["description"]
-    param_schema: dict[str, Any] = agent_info["parameters"]
-    requires_oracle: bool = agent_info.get("requires_oracle", False)
-    typical_count: list[int] | None = agent_info.get("typical_count_range")
-    recommended_with: list[str] = agent_info.get("recommended_with", [])
+for cat_key, cat_agents in _grouped_agents:
+    cat_info = category_meta.get(cat_key, {})
+    cat_label = cat_info.get("label", cat_key)
+    cat_desc = cat_info.get("description", "")
+    st.markdown(f"##### {cat_label}")
+    if cat_desc:
+        st.caption(cat_desc)
 
-    # Template defaults for this agent
-    tpl_agent = tpl_agents.get(agent_name, {})
-    tpl_enabled = tpl_agent.get("enabled", False) if tpl_agents else False
-    tpl_count = tpl_agent.get("count", 0)
-    tpl_params = tpl_agent.get("params", {})
+    cols_per_row = 2
+    agent_cols = st.columns(cols_per_row)
 
-    col = agent_cols[idx % cols_per_row]
+    for idx, agent_info in enumerate(cat_agents):
+        agent_name: str = agent_info["name"]
+        category: str = agent_info["category"]
+        description: str = agent_info["description"]
+        param_schema: dict[str, Any] = agent_info["parameters"]
+        requires_oracle: bool = agent_info.get("requires_oracle", False)
+        typical_count: list[int] | None = agent_info.get("typical_count_range")
+        recommended_with: list[str] = agent_info.get("recommended_with", [])
 
-    with col, st.expander(f"**{agent_name}**  `{category}`", expanded=tpl_enabled):
-        st.caption(description)
+        # Template defaults for this agent
+        tpl_agent = tpl_agents.get(agent_name, {})
+        tpl_enabled = tpl_agent.get("enabled", False) if tpl_agents else False
+        tpl_count = tpl_agent.get("count", 0)
+        tpl_params = tpl_agent.get("params", {})
 
-        # Show metadata badges
-        badges: list[str] = []
-        if requires_oracle:
-            badges.append("🔮 Requires oracle")
-        if typical_count:
-            badges.append(f"📊 Typical count: {typical_count[0]}–{typical_count[1]}")
-        if recommended_with:
-            badges.append(f"🤝 Pairs well with: {', '.join(recommended_with)}")
-        if badges:
-            st.markdown("  \n".join(badges))
+        col = agent_cols[idx % cols_per_row]
 
-        # Warn if oracle-dependent agent is used without oracle
-        if requires_oracle and oracle_selection == "none":
-            st.warning("⚠️ This agent requires an oracle. Enable an oracle or this agent will fail validation.")
+        with col, st.expander(f"**{agent_name}**", expanded=tpl_enabled):
+            st.caption(description)
 
-        enabled = st.toggle("Enabled", value=tpl_enabled, key=f"enabled_{agent_name}")
+            # Show metadata badges
+            badges: list[str] = []
+            if requires_oracle:
+                badges.append("🔮 Requires oracle")
+            if typical_count:
+                badges.append(f"📊 Typical: {typical_count[0]}–{typical_count[1]}")
+            if recommended_with:
+                badges.append(f"🤝 {', '.join(recommended_with)}")
+            if badges:
+                st.markdown(" · ".join(badges))
 
-        if enabled:
-            count_default = max(tpl_count, 1)
-            if typical_count and tpl_count == 0:
-                count_default = typical_count[0]
-            count = st.number_input(
-                "Count",
-                min_value=1,
-                value=count_default,
-                step=1,
-                key=f"count_{agent_name}",
-                help=f"Typical range: {typical_count[0]}–{typical_count[1]}" if typical_count else None,
-            )
+            # Warn if oracle-dependent agent is used without oracle
+            if requires_oracle and oracle_selection == "none":
+                st.warning("⚠️ This agent requires an oracle.")
 
-            # Render per-agent parameter inputs
-            agent_params: dict[str, Any] = {}
-            visible_params = {k: v for k, v in param_schema.items() if k not in HIDDEN_PARAMS}
+            enabled = st.toggle("Enabled", value=tpl_enabled, key=f"enabled_{agent_name}")
 
-            if visible_params:
-                for param_name, schema in visible_params.items():
-                    default = tpl_params.get(param_name, schema.get("default"))
+            if enabled:
+                count_default = max(tpl_count, 1)
+                if typical_count and tpl_count == 0:
+                    count_default = typical_count[0]
+                count = st.number_input(
+                    "Count",
+                    min_value=1,
+                    value=count_default,
+                    step=1,
+                    key=f"count_{agent_name}",
+                    label_visibility="collapsed",
+                    help=f"Typical range: {typical_count[0]}–{typical_count[1]}" if typical_count else None,
+                )
 
-                    # Extract rich metadata from schema
-                    field_desc = schema.get("description")
-                    field_unit = (schema.get("json_schema_extra") or {}).get("unit")
-                    if field_unit and field_desc:
-                        field_help = f"{field_desc} (unit: {field_unit})"
-                    elif field_desc:
-                        field_help = field_desc
-                    else:
-                        field_help = None
+                # Render per-agent parameter inputs in compact table layout
+                agent_params: dict[str, Any] = {}
+                visible_params = {k: v for k, v in param_schema.items() if k not in HIDDEN_PARAMS}
 
-                    # Build display label with unit hint
-                    display_label = param_name
-                    if field_unit:
-                        display_label = f"{param_name} ({field_unit})"
+                if visible_params:
+                    for param_name, schema in visible_params.items():
+                        default = tpl_params.get(param_name, schema.get("default"))
 
-                    # Resolve type and nullability from JSON Schema
-                    # Pydantic v2 uses anyOf: [{type: X}, {type: "null"}] for Optional
-                    nullable = False
-                    any_of = schema.get("anyOf")
-                    if any_of:
-                        types = [s.get("type") for s in any_of if isinstance(s, dict)]
-                        nullable = "null" in types
-                        non_null = [t for t in types if t != "null"]
-                        # Multiple non-null types (e.g. Union[int, str]) → text input
-                        param_type = non_null[0] if len(non_null) == 1 else "string"
-                    else:
-                        raw_type = schema.get("type", "string")
-                        if isinstance(raw_type, list):
-                            nullable = "null" in raw_type
-                            non_null = [t for t in raw_type if t != "null"]
+                        # Extract rich metadata from schema
+                        field_desc = schema.get("description")
+                        field_unit = (schema.get("json_schema_extra") or {}).get("unit")
+                        if field_unit and field_desc:
+                            field_help = f"{field_desc} (unit: {field_unit})"
+                        elif field_desc:
+                            field_help = field_desc
+                        else:
+                            field_help = None
+
+                        # Build display label with unit hint
+                        display_label = param_name
+                        if field_unit:
+                            display_label = f"{param_name} ({field_unit})"
+
+                        # Resolve type and nullability from JSON Schema
+                        nullable = False
+                        any_of = schema.get("anyOf")
+                        if any_of:
+                            types = [s.get("type") for s in any_of if isinstance(s, dict)]
+                            nullable = "null" in types
+                            non_null = [t for t in types if t != "null"]
                             param_type = non_null[0] if len(non_null) == 1 else "string"
                         else:
-                            param_type = raw_type
+                            raw_type = schema.get("type", "string")
+                            if isinstance(raw_type, list):
+                                nullable = "null" in raw_type
+                                non_null = [t for t in raw_type if t != "null"]
+                                param_type = non_null[0] if len(non_null) == 1 else "string"
+                            else:
+                                param_type = raw_type
 
-                    widget_key = f"param_{agent_name}_{param_name}"
+                        widget_key = f"param_{agent_name}_{param_name}"
 
-                    if param_type == "boolean":
-                        val = st.checkbox(
-                            display_label,
-                            value=bool(default) if default is not None else True,
-                            key=widget_key,
-                            help=field_help,
+                        # Compact row: label on left, widget on right
+                        lbl_col, val_col = st.columns([2, 3])
+                        lbl_col.markdown(
+                            f"<div style='line-height:2.4rem;font-size:0.85rem' title='{field_help or ''}'>{display_label}</div>",
+                            unsafe_allow_html=True,
                         )
-                        agent_params[param_name] = val
 
-                    elif param_type == "integer":
-                        if nullable:
-                            raw = st.text_input(
+                        if param_type == "boolean":
+                            val = val_col.checkbox(
                                 display_label,
-                                value=str(default) if default is not None else "",
+                                value=bool(default) if default is not None else True,
                                 key=widget_key,
-                                help=field_help or "Leave empty for default (None)",
+                                label_visibility="collapsed",
                             )
-                            if raw.strip():
-                                agent_params[param_name] = int(raw)
+                            agent_params[param_name] = val
+
+                        elif param_type == "integer":
+                            if nullable:
+                                raw = val_col.text_input(
+                                    display_label,
+                                    value=str(default) if default is not None else "",
+                                    key=widget_key,
+                                    label_visibility="collapsed",
+                                )
+                                if raw.strip():
+                                    agent_params[param_name] = int(raw)
+                            else:
+                                try:
+                                    int_default = int(default) if default is not None else 0
+                                except (ValueError, TypeError):
+                                    int_default = 0
+                                val = val_col.number_input(
+                                    display_label,
+                                    value=int_default,
+                                    step=1,
+                                    key=widget_key,
+                                    label_visibility="collapsed",
+                                )
+                                agent_params[param_name] = val
+
+                        elif param_type == "number":
+                            if nullable:
+                                raw = val_col.text_input(
+                                    display_label,
+                                    value=str(default) if default is not None else "",
+                                    key=widget_key,
+                                    label_visibility="collapsed",
+                                )
+                                if raw.strip():
+                                    agent_params[param_name] = float(raw)
+                            else:
+                                float_default = float(default) if default is not None else 0.0
+                                fmt = "%.2e" if abs(float_default) < 0.01 and float_default != 0 else "%.4f"
+                                val = val_col.number_input(
+                                    display_label,
+                                    value=float_default,
+                                    format=fmt,
+                                    key=widget_key,
+                                    label_visibility="collapsed",
+                                )
+                                agent_params[param_name] = val
+
+                        elif param_type == "string":
+                            str_default = str(default) if default is not None else ""
+                            val = val_col.text_input(
+                                display_label,
+                                value=str_default,
+                                key=widget_key,
+                                label_visibility="collapsed",
+                            )
+                            if val or not nullable:
+                                agent_params[param_name] = val
+
                         else:
-                            try:
-                                int_default = int(default) if default is not None else 0
-                            except (ValueError, TypeError):
-                                int_default = 0
-                            val = st.number_input(
+                            str_default = str(default) if default is not None else ""
+                            val = val_col.text_input(
                                 display_label,
-                                value=int_default,
-                                step=1,
+                                value=str_default,
                                 key=widget_key,
-                                help=field_help,
+                                label_visibility="collapsed",
                             )
-                            agent_params[param_name] = val
+                            if val or not nullable:
+                                agent_params[param_name] = val
 
-                    elif param_type == "number":
-                        if nullable:
-                            raw = st.text_input(
-                                display_label,
-                                value=str(default) if default is not None else "",
-                                key=widget_key,
-                                help=field_help or "Leave empty for default (None)",
-                            )
-                            if raw.strip():
-                                agent_params[param_name] = float(raw)
-                        else:
-                            float_default = float(default) if default is not None else 0.0
-                            # Use scientific format for very small numbers
-                            fmt = "%.2e" if abs(float_default) < 0.01 and float_default != 0 else "%.4f"
-                            val = st.number_input(
-                                display_label,
-                                value=float_default,
-                                format=fmt,
-                                key=widget_key,
-                                help=field_help,
-                            )
-                            agent_params[param_name] = val
-
-                    elif param_type == "string":
-                        str_default = str(default) if default is not None else ""
-                        val = st.text_input(
-                            display_label,
-                            value=str_default,
-                            key=widget_key,
-                            help=field_help,
-                        )
-                        if val or not nullable:
-                            agent_params[param_name] = val
-
-                    else:
-                        # Fallback: text input
-                        str_default = str(default) if default is not None else ""
-                        val = st.text_input(
-                            display_label,
-                            value=str_default,
-                            key=widget_key,
-                            help=field_help,
-                        )
-                        if val or not nullable:
-                            agent_params[param_name] = val
-
-            agent_configs[agent_name] = AgentGroupConfig(
-                enabled=True,
-                count=count,
-                params=agent_params,
-            )
+                agent_configs[agent_name] = AgentGroupConfig(
+                    enabled=True,
+                    count=count,
+                    params=agent_params,
+                )
 
 # Total agent count
 total = sum(cfg.count for cfg in agent_configs.values())
@@ -622,7 +645,8 @@ with tab_overview:
                     fillcolor="rgba(255, 127, 14, 0.2)",
                 )
             )
-            avg_spread = float(spread_series.mean()) if len(spread_series) > 0 else 0
+            _mean = spread_series.mean()
+            avg_spread = float(_mean) if pd.notna(_mean) else 0.0
             fig_spread.add_hline(y=avg_spread, line_dash="dash", line_color="gray", annotation_text=f"Mean: ${avg_spread:.4f}")
             fig_spread.update_layout(
                 title="Bid-Ask Spread Over Time",
