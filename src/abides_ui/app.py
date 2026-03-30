@@ -266,7 +266,12 @@ for cat_key, cat_agents in _grouped_agents:
 
         col = agent_cols[idx % cols_per_row]
 
-        with col, st.expander(f"**{agent_name}**", expanded=tpl_enabled):
+        # Read live widget state for the expander label badge
+        _live_enabled = st.session_state.get(f"enabled_{agent_name}", tpl_enabled)
+        _live_count = st.session_state.get(f"count_{agent_name}", max(tpl_count, 1))
+        _badge = f" · ✅ ×{_live_count}" if _live_enabled else ""
+
+        with col, st.expander(f"**{agent_name}**{_badge}", expanded=tpl_enabled):
             st.caption(description)
 
             # Show metadata badges
@@ -289,9 +294,13 @@ for cat_key, cat_agents in _grouped_agents:
             count_default = max(tpl_count, 1)
             if typical_count and tpl_count == 0:
                 count_default = typical_count[0]
-            count = st.number_input(
+            # Slider for fast range adjustment; max derived from typical range
+            _slider_max = (typical_count[1] * 3) if typical_count else 500
+            _slider_max = max(_slider_max, count_default * 3, 10)
+            count = st.slider(
                 "Count",
                 min_value=1,
+                max_value=_slider_max,
                 value=count_default,
                 step=1,
                 key=f"count_{agent_name}",
