@@ -528,6 +528,7 @@ if run_clicked:
     st.session_state["result"] = result
     st.session_state["wall_time"] = wall_time
     st.session_state["ticker"] = ticker
+    st.session_state["config_json"] = config.model_dump_json(indent=2)
 
 # ── Display results ───────────────────────────────────────────────────────────
 
@@ -581,7 +582,9 @@ if summary_warnings:
 
 # ── Tabbed analytics ─────────────────────────────────────────────────────────
 
-tab_overview, tab_micro, tab_flow, tab_agents, tab_exec = st.tabs(["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics", "⚡ Execution Analytics"])
+tab_overview, tab_micro, tab_flow, tab_agents, tab_exec, tab_config = st.tabs(
+    ["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics", "⚡ Execution Analytics", "📄 Config Log"]
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: MARKET OVERVIEW
@@ -823,3 +826,22 @@ with tab_exec:
             st.plotly_chart(charts.slippage_comparison(slip_data), width="stretch")
     else:
         st.info("No execution agents in this simulation. Add a POV, TWAP, or VWAP execution agent to see analytics.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 6: CONFIG LOG
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_config:
+    config_json: str | None = st.session_state.get("config_json")
+    if config_json:
+        st.markdown("#### Simulation Configuration")
+        st.caption("JSON snapshot of the configuration used for this run. Copy or download for reproducibility.")
+        st.code(config_json, language="json")
+        st.download_button(
+            "⬇️ Download config.json",
+            data=config_json,
+            file_name="abides_config.json",
+            mime="application/json",
+        )
+    else:
+        st.info("No configuration recorded.")
