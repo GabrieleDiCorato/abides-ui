@@ -310,8 +310,10 @@ def extract_order_log(result: SimulationResult) -> pd.DataFrame | None:
         df = result.order_logs()
         if df is None or len(df) == 0:
             return None
-        if "side" in df.columns:
-            df["side"] = df["side"].astype(str)
+        # Convert enum columns to strings so PyArrow/Streamlit can serialize them
+        for col in ("side", "time_in_force"):
+            if col in df.columns:
+                df[col] = df[col].astype(str)
         return df
     except Exception:
         return None
