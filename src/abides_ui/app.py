@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from importlib.metadata import version as _pkg_version
 from itertools import groupby as _groupby
 from typing import Any
 
@@ -203,6 +204,10 @@ with st.sidebar:
                 step=1000.0,
             )
 
+    st.divider()
+    _hasufel_version = _pkg_version("abides-hasufel")
+    st.caption(f"Powered by [abides-hasufel v{_hasufel_version}](https://github.com/GabrieleDiCorato/abides-hasufel)")
+
 # ── Main area: agent boxes ───────────────────────────────────────────────────
 
 st.subheader("Agent Composition")
@@ -220,7 +225,7 @@ HIDDEN_PARAMS = {
     "position_limit_clamp",
     "max_drawdown",
     "max_order_rate",
-    "order_rate_window_ns",
+    "order_rate_window",
 }
 
 # Collect agent configs from UI

@@ -82,10 +82,10 @@ def _fake_exec_metrics() -> ExecutionMetrics:
         fill_rate_pct=95.0,
         avg_fill_price_cents=100_050,
         vwap_cents=100_000,
-        vwap_slippage_bps=5.0,
+        vwap_slippage_bps=5,
         participation_rate_pct=12.5,
         arrival_price_cents=100_000,
-        implementation_shortfall_bps=5.0,
+        implementation_shortfall_bps=5,
     )
 
 
@@ -248,7 +248,7 @@ class TestAgentDataFrameExec:
             }
             if a.execution_metrics is not None:
                 row["Fill Rate (%)"] = round(a.execution_metrics.fill_rate_pct, 2)
-                row["VWAP Slippage (bps)"] = round(a.execution_metrics.vwap_slippage_bps, 2)
+                row["VWAP Slippage (bps)"] = round(a.execution_metrics.vwap_slippage_bps, 2) if a.execution_metrics.vwap_slippage_bps is not None else None
             rows.append(row)
         df = pd.DataFrame(rows)
         assert "Fill Rate (%)" in df.columns
