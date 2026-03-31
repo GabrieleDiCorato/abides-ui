@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from importlib.metadata import version as _pkg_version
 from itertools import groupby as _groupby
@@ -77,8 +78,65 @@ with st.sidebar:
     if selected_template != "None":
         st.caption(template_descriptions[selected_template])
 
-    # Load template defaults when selected
-    if selected_template != "None":
+    # ── Import from JSON ──────────────────────────────────────────────────────
+    with st.expander("📂 Import from JSON", expanded=False):
+        uploaded_file = st.file_uploader(
+            "Upload config file",
+            type=["json"],
+            key="_config_upload",
+            help="Upload a previously exported ABIDES config JSON file.",
+        )
+        pasted_json = st.text_area(
+            "Or paste JSON config",
+            height=120,
+            key="_config_paste",
+            help="Paste a full ABIDES simulation config JSON.",
+        )
+
+        if st.button("📥 Load Config", key="_load_config_btn"):
+            raw_json: str | None = None
+            if uploaded_file is not None:
+                raw_json = uploaded_file.read().decode("utf-8")
+            elif pasted_json.strip():
+                raw_json = pasted_json.strip()
+
+            if raw_json:
+                try:
+                    imported = json.loads(raw_json)
+                    if not isinstance(imported, dict):
+                        st.error("Invalid config: expected a JSON object.")
+                    elif "market" not in imported and "agents" not in imported:
+                        st.error("Invalid config: must contain 'market' or 'agents' keys.")
+                    else:
+                        st.session_state["_imported_config"] = imported
+                        # Clear widget states so the imported values apply
+                        for k in list(st.session_state):
+                            if k.startswith(("enabled_", "count_", "param_")):
+                                del st.session_state[k]
+                        st.rerun()
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}")
+            else:
+                st.warning("Upload a file or paste JSON first.")
+
+    # Show active import indicator
+    _imported_cfg: dict[str, Any] | None = st.session_state.get("_imported_config")
+    if _imported_cfg is not None:
+        st.success("✅ Using imported config")
+        if st.button("✖ Clear import", key="_clear_import_btn"):
+            del st.session_state["_imported_config"]
+            for k in list(st.session_state):
+                if k.startswith(("enabled_", "count_", "param_")):
+                    del st.session_state[k]
+            st.rerun()
+
+    # Load template defaults when selected (imported config takes priority)
+    if _imported_cfg is not None:
+        tpl_market = _imported_cfg.get("market", {})
+        tpl_oracle = tpl_market.get("oracle", {}) if isinstance(tpl_market.get("oracle"), dict) else {}
+        tpl_agents = _imported_cfg.get("agents", {})
+        tpl_sim = _imported_cfg.get("simulation", {})
+    elif selected_template != "None":
         tpl = load_template_config(selected_template)
         tpl_market = tpl.get("market", {})
         tpl_oracle = tpl_market.get("oracle", {})
@@ -91,8 +149,9 @@ with st.sidebar:
         tpl_sim = {}
 
     # Reset agent widget states when template changes so new defaults apply
-    if st.session_state.get("_prev_template") != selected_template:
-        st.session_state["_prev_template"] = selected_template
+    _source_key = json.dumps(_imported_cfg, sort_keys=True) if _imported_cfg else selected_template
+    if st.session_state.get("_prev_template") != _source_key:
+        st.session_state["_prev_template"] = _source_key
         for k in list(st.session_state):
             if k.startswith(("enabled_", "count_", "param_")):
                 del st.session_state[k]
@@ -844,13 +903,93 @@ with tab_config:
     config_json: str | None = st.session_state.get("config_json")
     if config_json:
         st.markdown("#### Simulation Configuration")
-        st.caption("JSON snapshot of the configuration used for this run. Copy or download for reproducibility.")
-        st.code(config_json, language="json")
-        st.download_button(
-            "⬇️ Download config.json",
-            data=config_json,
-            file_name="abides_config.json",
-            mime="application/json",
-        )
+        st.caption("This is the exact configuration used to produce the results above.")
+
+        config_dict = json.loads(config_json)
+
+        # ── Structured overview ───────────────────────────────────────────────
+        _cfg_market = config_dict.get("market", {})
+        _cfg_oracle = _cfg_market.get("oracle")
+        _cfg_agents = config_dict.get("agents", {})
+        _cfg_sim = config_dict.get("simulation", {})
+
+        # Market settings
+        with st.expander("🏦 Market Settings", expanded=True):
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Ticker", _cfg_market.get("ticker", "—"))
+            mc2.metric("Date", _cfg_market.get("date", "—"))
+            mc3.metric("Open", _cfg_market.get("start_time", "—"))
+            mc4.metric("Close", _cfg_market.get("end_time", "—"))
+            if _cfg_market.get("opening_price") is not None:
+                st.metric("Opening Price", f"${_cfg_market['opening_price'] / 100:,.2f}")
+
+        # Oracle settings
+        with st.expander("🔮 Oracle Settings", expanded=True):
+            if _cfg_oracle and isinstance(_cfg_oracle, dict):
+                oc = st.columns(3)
+                r_bar = _cfg_oracle.get("r_bar")
+                if r_bar is not None:
+                    oc[0].metric("r̄ (fundamental)", f"${r_bar / 100:,.2f}")
+                fund_vol_val = _cfg_oracle.get("fund_vol")
+                if fund_vol_val is not None:
+                    oc[1].metric("Fundamental vol", f"{fund_vol_val:.1e}")
+                hl = _cfg_oracle.get("mean_reversion_half_life")
+                if hl is not None:
+                    oc[2].metric("Half-life", str(hl))
+                # Megashock params
+                ms_interval = _cfg_oracle.get("megashock_mean_interval")
+                if ms_interval:
+                    ms_cols = st.columns(3)
+                    ms_cols[0].metric("Megashock interval", str(ms_interval))
+                    ms_mean = _cfg_oracle.get("megashock_mean")
+                    if ms_mean is not None:
+                        ms_cols[1].metric("Megashock mean", f"{ms_mean:,.0f}")
+                    ms_var = _cfg_oracle.get("megashock_var")
+                    if ms_var is not None:
+                        ms_cols[2].metric("Megashock var", f"{ms_var:,.0f}")
+            else:
+                st.info("No oracle (LOB-only mode)")
+
+        # Agent composition
+        with st.expander("👥 Agent Composition", expanded=True):
+            _agent_rows = []
+            for aname, acfg in _cfg_agents.items():
+                if isinstance(acfg, dict) and acfg.get("enabled", False):
+                    _agent_rows.append({
+                        "Agent": aname,
+                        "Count": acfg.get("count", 0),
+                        "Parameters": ", ".join(f"{k}={v}" for k, v in acfg.get("params", {}).items()) or "defaults",
+                    })
+            if _agent_rows:
+                st.dataframe(
+                    pd.DataFrame(_agent_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                _total_agents = sum(r["Count"] for r in _agent_rows)
+                st.caption(f"**Total: {_total_agents} agents** (+ 1 Exchange)")
+            else:
+                st.info("No agents configured.")
+
+        # Simulation metadata
+        if _cfg_sim:
+            with st.expander("⚙️ Simulation Metadata", expanded=False):
+                for k, v in _cfg_sim.items():
+                    st.text(f"{k}: {v}")
+
+        st.divider()
+
+        # Download + raw JSON toggle
+        dl_col, _ = st.columns([1, 3])
+        with dl_col:
+            st.download_button(
+                "⬇️ Download config.json",
+                data=config_json,
+                file_name="abides_config.json",
+                mime="application/json",
+            )
+
+        with st.expander("📝 Raw JSON", expanded=False):
+            st.code(config_json, language="json")
     else:
         st.info("No configuration recorded.")
