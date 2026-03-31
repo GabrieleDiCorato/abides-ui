@@ -536,14 +536,15 @@ class TestConfigJsonRoundTrip:
         assert "agents" in imported
 
         tpl_market = imported.get("market", {})
-        tpl_oracle = tpl_market.get("oracle", {}) if isinstance(tpl_market.get("oracle"), dict) else {}
+        _raw_oracle = tpl_market.get("oracle")
+        tpl_oracle = _raw_oracle if isinstance(_raw_oracle, dict) else {}
         tpl_agents = imported.get("agents", {})
-        tpl_sim = imported.get("simulation", {})
 
         assert tpl_market.get("ticker") == "ABM"
         assert tpl_oracle.get("r_bar") == 100_000
         assert "noise" in tpl_agents
         assert tpl_agents["noise"]["enabled"] is True
+        assert isinstance(imported.get("simulation", {}), dict)
 
     def test_invalid_json_rejected(self):
         import json

@@ -133,7 +133,8 @@ with st.sidebar:
     # Load template defaults when selected (imported config takes priority)
     if _imported_cfg is not None:
         tpl_market = _imported_cfg.get("market", {})
-        tpl_oracle = tpl_market.get("oracle", {}) if isinstance(tpl_market.get("oracle"), dict) else {}
+        _raw_oracle = tpl_market.get("oracle")
+        tpl_oracle = _raw_oracle if isinstance(_raw_oracle, dict) else {}
         tpl_agents = _imported_cfg.get("agents", {})
         tpl_sim = _imported_cfg.get("simulation", {})
     elif selected_template != "None":
@@ -930,9 +931,9 @@ with tab_config:
                 r_bar = _cfg_oracle.get("r_bar")
                 if r_bar is not None:
                     oc[0].metric("r̄ (fundamental)", f"${r_bar / 100:,.2f}")
-                fund_vol_val = _cfg_oracle.get("fund_vol")
-                if fund_vol_val is not None:
-                    oc[1].metric("Fundamental vol", f"{fund_vol_val:.1e}")
+                fund_vol_cfg = _cfg_oracle.get("fund_vol")
+                if fund_vol_cfg is not None:
+                    oc[1].metric("Fundamental vol", f"{fund_vol_cfg:.1e}")
                 hl = _cfg_oracle.get("mean_reversion_half_life")
                 if hl is not None:
                     oc[2].metric("Half-life", str(hl))
