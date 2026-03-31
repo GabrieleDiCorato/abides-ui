@@ -487,6 +487,78 @@ class TestSimulationRun:
             assert hasattr(a, "mark_to_market_cents")
 
 
+# ── JSON round-trip (import / export) ─────────────────────────────────────────
+
+
+class TestConfigJsonRoundTrip:
+    """Verify config JSON export → re-import produces an equivalent object."""
+
+    def test_round_trip_with_oracle(self):
+        cfg = _minimal_config()
+        json_str = cfg.model_dump_json(indent=2)
+        restored = SimulationConfig.model_validate_json(json_str)
+        assert restored.market.ticker == cfg.market.ticker
+        assert restored.market.oracle is not None
+        assert restored.market.oracle.r_bar == cfg.market.oracle.r_bar
+        assert set(restored.agents) == set(cfg.agents)
+        for name in cfg.agents:
+            assert restored.agents[name].count == cfg.agents[name].count
+
+    def test_round_trip_oracle_absent(self):
+        cfg = SimulationConfig(
+            market=MarketConfig(
+                ticker="ABM",
+                date="20210205",
+                start_time="09:30:00",
+                end_time="09:35:00",
+                oracle=None,
+                opening_price=100_000,
+                exchange=ExchangeConfig(),
+            ),
+            agents={"noise": AgentGroupConfig(enabled=True, count=5, params={})},
+            simulation=SimulationMeta(seed=42),
+        )
+        json_str = cfg.model_dump_json(indent=2)
+        restored = SimulationConfig.model_validate_json(json_str)
+        assert restored.market.oracle is None
+        assert restored.market.opening_price == 100_000
+
+    def test_round_trip_via_dict(self):
+        """Simulate the import path: JSON → dict → template data extraction."""
+        import json
+
+        cfg = _minimal_config()
+        json_str = cfg.model_dump_json(indent=2)
+        imported = json.loads(json_str)
+
+        assert isinstance(imported, dict)
+        assert "market" in imported
+        assert "agents" in imported
+
+        tpl_market = imported.get("market", {})
+        _raw_oracle = tpl_market.get("oracle")
+        tpl_oracle = _raw_oracle if isinstance(_raw_oracle, dict) else {}
+        tpl_agents = imported.get("agents", {})
+
+        assert tpl_market.get("ticker") == "ABM"
+        assert tpl_oracle.get("r_bar") == 100_000
+        assert "noise" in tpl_agents
+        assert tpl_agents["noise"]["enabled"] is True
+        assert isinstance(imported.get("simulation", {}), dict)
+
+    def test_invalid_json_rejected(self):
+        import json
+
+        with pytest.raises(json.JSONDecodeError):
+            json.loads("not valid json {{{")
+
+    def test_missing_keys_detected(self):
+        import json
+
+        imported = json.loads('{"foo": "bar"}')
+        assert "market" not in imported and "agents" not in imported
+
+
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 
