@@ -37,7 +37,7 @@ def _patch_amm_none_mid() -> None:
 
     _original = AdaptiveMarketMakerAgent.place_orders
 
-    def _guarded_place_orders(self, mid):  # type: ignore[override]
+    def _guarded_place_orders(self, mid: int | None) -> None:  # type: ignore[override]
         if mid is None:
             return
         _original(self, mid)
