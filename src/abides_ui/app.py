@@ -23,6 +23,9 @@ from abides_markets.config_system.templates import get_template
 from abides_markets.simulation import ResultProfile, SimulationResult, run_simulation
 
 from abides_ui import charts, metrics
+from abides_ui._patches import apply_patches as _apply_patches
+
+_apply_patches()
 
 # ── Page config ───────────────────────────────────────────────────────────────
 

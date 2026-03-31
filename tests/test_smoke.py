@@ -345,6 +345,51 @@ class TestConfigConstruction:
                 assert desc is not None and len(desc) > 0, f"Missing description for {a['name']}.{param_name}"
 
 
+# ── Runtime patches ───────────────────────────────────────────────────────────
+
+
+class TestPatches:
+    """Verify the runtime patches for upstream library bugs."""
+
+    def test_patch_amm_none_mid_prevents_crash(self):
+        """place_orders(None) must not raise TypeError after patching."""
+        from abides_ui._patches import apply_patches
+
+        apply_patches()
+
+        from abides_markets.agents.market_makers.adaptive_market_maker_agent import (
+            AdaptiveMarketMakerAgent,
+        )
+
+        agent = AdaptiveMarketMakerAgent(
+            id=0,
+            symbol="ABM",
+            starting_cash=10_000_000,
+            random_state=np.random.RandomState(42),
+        )
+        # Before the patch this would raise TypeError: int() argument … NoneType
+        agent.place_orders(None)  # should silently return
+
+    def test_patch_is_idempotent(self):
+        """Calling apply_patches() multiple times must not stack wrappers."""
+        from abides_ui._patches import apply_patches
+
+        apply_patches()
+        apply_patches()  # second call is a no-op
+
+        from abides_markets.agents.market_makers.adaptive_market_maker_agent import (
+            AdaptiveMarketMakerAgent,
+        )
+
+        agent = AdaptiveMarketMakerAgent(
+            id=0,
+            symbol="ABM",
+            starting_cash=10_000_000,
+            random_state=np.random.RandomState(42),
+        )
+        agent.place_orders(None)  # still works
+
+
 # ── Simulation run ────────────────────────────────────────────────────────────
 
 
