@@ -354,13 +354,13 @@ for cat_key, cat_agents in _grouped_agents:
             count_default = max(tpl_count, 1)
             if typical_count and tpl_count == 0:
                 count_default = typical_count[0]
-            # Slider for fast range adjustment; max derived from typical range
-            _slider_max = (typical_count[1] * 3) if typical_count else 500
-            _slider_max = max(_slider_max, count_default * 3, 10)
-            count = st.slider(
+            # Number input for precise agent count selection
+            _count_max = (typical_count[1] * 3) if typical_count else 1000
+            _count_max = max(_count_max, count_default * 3, 10)
+            count = st.number_input(
                 "Count",
                 min_value=1,
-                max_value=_slider_max,
+                max_value=_count_max,
                 value=count_default,
                 step=1,
                 key=f"count_{agent_name}",
