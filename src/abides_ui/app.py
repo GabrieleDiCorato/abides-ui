@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from importlib.metadata import version as _pkg_version
 from itertools import groupby as _groupby
@@ -106,8 +107,66 @@ with st.sidebar:
                 )
                 st.markdown(_tags_html, unsafe_allow_html=True)
 
-    # Load template defaults when selected
-    if selected_template != "None":
+    # ── Import from JSON ──────────────────────────────────────────────────────
+    with st.expander("📂 Import from JSON", expanded=False):
+        uploaded_file = st.file_uploader(
+            "Upload config file",
+            type=["json"],
+            key="_config_upload",
+            help="Upload a previously exported ABIDES config JSON file.",
+        )
+        pasted_json = st.text_area(
+            "Or paste JSON config",
+            height=120,
+            key="_config_paste",
+            help="Paste a full ABIDES simulation config JSON.",
+        )
+
+        if st.button("📥 Load Config", key="_load_config_btn"):
+            raw_json: str | None = None
+            if uploaded_file is not None:
+                raw_json = uploaded_file.read().decode("utf-8")
+            elif pasted_json.strip():
+                raw_json = pasted_json.strip()
+
+            if raw_json:
+                try:
+                    imported = json.loads(raw_json)
+                    if not isinstance(imported, dict):
+                        st.error("Invalid config: expected a JSON object.")
+                    elif "market" not in imported and "agents" not in imported:
+                        st.error("Invalid config: must contain 'market' or 'agents' keys.")
+                    else:
+                        st.session_state["_imported_config"] = imported
+                        # Clear widget states so the imported values apply
+                        for k in list(st.session_state):
+                            if k.startswith(("enabled_", "count_", "param_")):
+                                del st.session_state[k]
+                        st.rerun()
+                except json.JSONDecodeError as exc:
+                    st.error(f"Invalid JSON: {exc}")
+            else:
+                st.warning("Upload a file or paste JSON first.")
+
+    # Show active import indicator
+    _imported_cfg: dict[str, Any] | None = st.session_state.get("_imported_config")
+    if _imported_cfg is not None:
+        st.success("✅ Using imported config")
+        if st.button("✖ Clear import", key="_clear_import_btn"):
+            del st.session_state["_imported_config"]
+            for k in list(st.session_state):
+                if k.startswith(("enabled_", "count_", "param_")):
+                    del st.session_state[k]
+            st.rerun()
+
+    # Load template defaults when selected (imported config takes priority)
+    if _imported_cfg is not None:
+        tpl_market = _imported_cfg.get("market", {})
+        _raw_oracle = tpl_market.get("oracle")
+        tpl_oracle = _raw_oracle if isinstance(_raw_oracle, dict) else {}
+        tpl_agents = _imported_cfg.get("agents", {})
+        tpl_sim = _imported_cfg.get("simulation", {})
+    elif selected_template != "None":
         tpl = load_template_config(selected_template)
         tpl_market = tpl.get("market", {})
         tpl_oracle = tpl_market.get("oracle", {})
@@ -120,8 +179,9 @@ with st.sidebar:
         tpl_sim = {}
 
     # Reset agent widget states when template changes so new defaults apply
-    if st.session_state.get("_prev_template") != selected_template:
-        st.session_state["_prev_template"] = selected_template
+    _source_key = json.dumps(_imported_cfg, sort_keys=True) if _imported_cfg else selected_template
+    if st.session_state.get("_prev_template") != _source_key:
+        st.session_state["_prev_template"] = _source_key
         for k in list(st.session_state):
             if k.startswith(("enabled_", "count_", "param_")):
                 del st.session_state[k]
@@ -322,13 +382,13 @@ for cat_key, cat_agents in _grouped_agents:
             count_default = max(tpl_count, 1)
             if typical_count and tpl_count == 0:
                 count_default = typical_count[0]
-            # Slider for fast range adjustment; max derived from typical range
-            _slider_max = (typical_count[1] * 3) if typical_count else 500
-            _slider_max = max(_slider_max, count_default * 3, 10)
-            count = st.slider(
+            # Number input for precise agent count selection
+            _count_max = (typical_count[1] * 3) if typical_count else 1000
+            _count_max = max(_count_max, count_default * 3, 10)
+            count = st.number_input(
                 "Count",
                 min_value=1,
-                max_value=_slider_max,
+                max_value=_count_max,
                 value=count_default,
                 step=1,
                 key=f"count_{agent_name}",
