@@ -736,7 +736,7 @@ tab_micro, tab_alpha, tab_book, tab_config = st.tabs(
 with tab_micro:
     if l1 is not None:
         # ── Price series (full width) ─────────────────────────────────────
-        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), use_container_width=True)
+        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), width='stretch')
 
         # ── Spread + Rolling volatility (side by side) ────────────────────
         _mean = l1.spread.mean()
@@ -745,12 +745,12 @@ with tab_micro:
 
         mc1, mc2 = st.columns(2)
         with mc1:
-            st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), use_container_width=True)
+            st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), width='stretch')
         with mc2:
             if rv is not None:
                 rolling_vol_series, window = rv
                 ret_time = l1.time.iloc[l1.log_returns.index]
-                st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), use_container_width=True)
+                st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), width='stretch')
 
         # ── Book pressure + Returns histogram (side by side) ──────────────
         pressure = metrics.compute_book_pressure(l1.l1_df)
@@ -758,10 +758,10 @@ with tab_micro:
 
         mc3, mc4 = st.columns(2)
         with mc3:
-            st.plotly_chart(charts.book_pressure(l1.time, pressure), use_container_width=True)
+            st.plotly_chart(charts.book_pressure(l1.time, pressure), width='stretch')
         with mc4:
             if rs is not None:
-                st.plotly_chart(charts.returns_histogram(l1.log_returns), use_container_width=True)
+                st.plotly_chart(charts.returns_histogram(l1.log_returns), width='stretch')
 
         # ── Spread statistics cards ───────────────────────────────────────
         ss = metrics.compute_spread_stats(l1.spread, l1.mid)
@@ -841,7 +841,7 @@ with tab_micro:
                 st.markdown(metric_row(_micro_cards), unsafe_allow_html=True)
 
         with st.expander("Raw L1 data"):
-            st.dataframe(l1.l1_df, use_container_width=True)
+            st.dataframe(l1.l1_df, width='stretch')
     else:
         st.warning("L1 price series not available.")
 
@@ -885,28 +885,28 @@ with tab_alpha:
 
         # ── Performance table ─────────────────────────────────────────────
         agg = metrics.compute_agent_performance(agent_df)
-        st.dataframe(agg, use_container_width=True, hide_index=True)
+        st.dataframe(agg, width='stretch', hide_index=True)
 
         # ── P&L box plot + equity curves (side by side) ───────────────────
         if exec_agents:
             aa1, aa2 = st.columns(2)
             with aa1:
-                st.plotly_chart(charts.pnl_box_plot(agent_df), use_container_width=True)
+                st.plotly_chart(charts.pnl_box_plot(agent_df), width='stretch')
             with aa2:
                 # Show equity curve for the first execution agent
                 for agent in exec_agents[:1]:
                     ec_df = metrics.build_equity_curve_df(agent)
                     if ec_df is not None:
-                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), use_container_width=True)
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width='stretch')
                     else:
                         st.caption("No equity curve data.")
         else:
-            st.plotly_chart(charts.pnl_box_plot(agent_df), use_container_width=True)
+            st.plotly_chart(charts.pnl_box_plot(agent_df), width='stretch')
 
         # ── Holdings breakdown ────────────────────────────────────────────
         hold_agg = metrics.build_holdings_table(result)
         if hold_agg is not None:
-            st.dataframe(hold_agg, use_container_width=True, hide_index=True)
+            st.dataframe(hold_agg, width='stretch', hide_index=True)
 
         # ── Slippage comparison ───────────────────────────────────────────
         if len(exec_agents) > 1:
@@ -917,7 +917,7 @@ with tab_alpha:
                 }
                 for a in exec_agents
             ]
-            st.plotly_chart(charts.slippage_comparison(slip_data), use_container_width=True)
+            st.plotly_chart(charts.slippage_comparison(slip_data), width='stretch')
 
         # ── Per-agent execution details ───────────────────────────────────
         if exec_agents:
@@ -926,14 +926,14 @@ with tab_alpha:
                     detail_df = metrics.build_execution_detail_df(agent)
                     if len(detail_df) > 0:
                         st.caption(f"**{agent.agent_name}** ({agent.agent_type})")
-                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                        st.dataframe(detail_df, width='stretch', hide_index=True)
                     ec_df = metrics.build_equity_curve_df(agent)
                     if ec_df is not None:
-                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), use_container_width=True)
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width='stretch')
 
         # ── Leaderboard ───────────────────────────────────────────────────
         with st.expander("Agent Leaderboard"):
-            st.dataframe(metrics.build_leaderboard(agent_df), use_container_width=True)
+            st.dataframe(metrics.build_leaderboard(agent_df), width='stretch')
     else:
         st.info("No agent data available.")
 
@@ -966,28 +966,28 @@ with tab_book:
             event_counts = order_df["EventType"].value_counts()
             ob1, ob2 = st.columns(2)
             with ob1:
-                st.plotly_chart(charts.event_type_pie(event_counts), use_container_width=True)
+                st.plotly_chart(charts.event_type_pie(event_counts), width='stretch')
             with ob2:
                 if "side" in order_df.columns:
                     submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
                     side_counts = submitted["side"].value_counts()
-                    st.plotly_chart(charts.side_balance(side_counts), use_container_width=True)
+                    st.plotly_chart(charts.side_balance(side_counts), width='stretch')
 
         # ── Cumulative imbalance (full width) ─────────────────────────────
         imb_df = metrics.compute_cumulative_imbalance(order_df)
         if imb_df is not None:
             flow_time = pd.to_datetime(imb_df["EventTime"], unit="ns")
-            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), use_container_width=True)
+            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), width='stretch')
 
         # ── Volume by agent type ──────────────────────────────────────────
         if "agent_type" in order_df.columns:
             exec_df = order_df[order_df["EventType"] == "ORDER_EXECUTED"]
             if len(exec_df) > 0 and "quantity" in exec_df.columns:
                 vol_by_type = exec_df.groupby("agent_type")["quantity"].sum().sort_values(ascending=True)
-                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), use_container_width=True)
+                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), width='stretch')
 
         with st.expander("Raw order logs"):
-            st.dataframe(order_df, use_container_width=True)
+            st.dataframe(order_df, width='stretch')
 
     # ── Trade attribution section ─────────────────────────────────────────
     if _has_trades:
@@ -1010,12 +1010,12 @@ with tab_book:
         # ── Maker/taker volume + Trade price scatter (side by side) ───────
         ob3, ob4 = st.columns(2)
         with ob3:
-            st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), use_container_width=True)
+            st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), width='stretch')
         with ob4:
-            st.plotly_chart(charts.trade_price_scatter(attr_df), use_container_width=True)
+            st.plotly_chart(charts.trade_price_scatter(attr_df), width='stretch')
 
         with st.expander("Raw trade attribution data"):
-            st.dataframe(attr_df, use_container_width=True)
+            st.dataframe(attr_df, width='stretch')
 
     if not _has_orders and not _has_trades:
         st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
