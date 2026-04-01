@@ -88,6 +88,7 @@ with st.sidebar:
         "Template",
         template_options,
         index=0,
+        key="_template_selector",
         help="Load a preset configuration from the library.",
     )
     if selected_template != "None":
@@ -139,10 +140,14 @@ with st.sidebar:
                         st.error("Invalid config: must contain 'market' or 'agents' keys.")
                     else:
                         st.session_state["_imported_config"] = imported
-                        # Clear widget states so the imported values apply
+                        # Clear stale widget states
                         for k in list(st.session_state):
                             if k.startswith(("enabled_", "count_", "param_")):
                                 del st.session_state[k]
+                        # Pre-populate from imported agents
+                        for _ag, _ac in imported.get("agents", {}).items():
+                            st.session_state[f"enabled_{_ag}"] = _ac.get("enabled", False)
+                            st.session_state[f"count_{_ag}"] = max(_ac.get("count", 1), 1)
                         st.rerun()
                 except json.JSONDecodeError as exc:
                     st.error(f"Invalid JSON: {exc}")
@@ -179,13 +184,19 @@ with st.sidebar:
         tpl_agents = {}
         tpl_sim = {}
 
-    # Reset agent widget states when template changes so new defaults apply
+    # Reset agent widget states when template/import source changes
     _source_key = json.dumps(_imported_cfg, sort_keys=True) if _imported_cfg else selected_template
     if st.session_state.get("_prev_template") != _source_key:
         st.session_state["_prev_template"] = _source_key
+        # Clear stale widget keys
         for k in list(st.session_state):
             if k.startswith(("enabled_", "count_", "param_")):
                 del st.session_state[k]
+        # Pre-populate session state with template values so widgets
+        # pick them up reliably after the rerun.
+        for _ag_name, _ag_cfg in tpl_agents.items():
+            st.session_state[f"enabled_{_ag_name}"] = _ag_cfg.get("enabled", False)
+            st.session_state[f"count_{_ag_name}"] = max(_ag_cfg.get("count", 1), 1)
         st.rerun()
 
     st.divider()
