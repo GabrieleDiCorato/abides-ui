@@ -23,11 +23,22 @@ from abides_markets.config_system.templates import get_template
 from abides_markets.simulation import ResultProfile, SimulationResult, run_simulation
 
 from abides_ui import charts, metrics
+from abides_ui.components import agent_recipe_bar, execution_console, metric_row
+from abides_ui.theme import CARBON_DARK_CSS
 
-# ── Page config ───────────────────────────────────────────────────────────────
+# ── Page config & theme injection ─────────────────────────────────────────────
 
-st.set_page_config(page_title="ABIDES Market Simulator", page_icon="📈", layout="wide")
-st.title("📈 ABIDES Market Simulator")
+st.set_page_config(page_title="ABIDES Terminal", layout="wide")
+st.markdown(f"<style>{CARBON_DARK_CSS}</style>", unsafe_allow_html=True)
+
+_hasufel_version = _pkg_version("abides-hasufel")
+st.markdown(
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
+    "<span style=\"font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:700;color:#E0E0E0;letter-spacing:0.08em\">ABIDES TERMINAL</span>"
+    f"<span style=\"font-family:'JetBrains Mono',monospace;font-size:0.6rem;background:rgba(0,112,255,0.15);color:#0070FF;padding:2px 8px;border-radius:4px;border:1px solid rgba(0,112,255,0.25)\">v{_hasufel_version}</span>"
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 # ── Load registry metadata (cached) ──────────────────────────────────────────
 
@@ -59,7 +70,10 @@ manifest = load_manifest()
 # ── Sidebar: template + market + oracle ───────────────────────────────────────
 
 with st.sidebar:
-    st.header("Simulation Configuration")
+    st.markdown(
+        "<div style=\"font-family:'JetBrains Mono',monospace;font-size:0.75rem;font-weight:600;color:#8A919B;letter-spacing:0.1em;margin-bottom:12px\">PREPARATION DESK</div>",
+        unsafe_allow_html=True,
+    )
 
     # Template selector
     base_templates = [t for t in templates if not t["is_overlay"]]
@@ -205,8 +219,7 @@ with st.sidebar:
             )
 
     st.divider()
-    _hasufel_version = _pkg_version("abides-hasufel")
-    st.caption(f"Powered by [abides-hasufel v{_hasufel_version}](https://github.com/GabrieleDiCorato/abides-hasufel)")
+    st.caption(f"[abides-hasufel v{_hasufel_version}](https://github.com/GabrieleDiCorato/abides-hasufel)")
 
 # ── Main area: agent boxes ───────────────────────────────────────────────────
 
@@ -471,6 +484,10 @@ for cat_key, cat_agents in _grouped_agents:
 total = sum(cfg.count for cfg in agent_configs.values())
 st.caption(f"**Total agents: {total}** (+ 1 Exchange)")
 
+# Market Recipe bar
+if agent_configs:
+    st.markdown(agent_recipe_bar(agent_configs), unsafe_allow_html=True)
+
 # ── Run button ────────────────────────────────────────────────────────────────
 
 st.divider()
@@ -520,20 +537,45 @@ if run_clicked:
         for issue in validation.errors:
             msg = issue.message
             if issue.suggestion:
-                msg += f"\n\n💡 **Suggestion:** {issue.suggestion}"
+                msg += f"\n\n**Suggestion:** {issue.suggestion}"
             st.error(msg)
         st.stop()
+
+    _sim_warnings: list[str] = []
     for issue in validation.warnings:
         msg = issue.message
         if issue.suggestion:
-            msg += f" — 💡 {issue.suggestion}"
-        st.warning(msg)
+            msg += f" — {issue.suggestion}"
+        _sim_warnings.append(msg)
 
-    with st.spinner("Running simulation…"):
+    with st.status("Executing simulation...", expanded=True) as _status:
+        st.markdown(
+            "<div style=\"font-family:'JetBrains Mono',monospace;font-size:0.72rem;color:#00C805;opacity:0.8\">"
+            "Compiling agent configuration...<br>"
+            f"Agents: {total} + 1 Exchange | Seed: {seed}<br>"
+            "Kernel boot sequence initiated..."
+            "</div>",
+            unsafe_allow_html=True,
+        )
         t0 = time.perf_counter()
         _profile = ResultProfile.FULL if include_raw_logs else ResultProfile.QUANT
         result: SimulationResult = run_simulation(config, profile=_profile)
         wall_time = time.perf_counter() - t0
+        _status.update(label=f"Simulation complete — {wall_time:.2f}s", state="complete", expanded=False)
+
+    # Build execution console log
+    _log_lines = [
+        f"Seed: {seed}",
+        f"Profile: {_profile.name}",
+        f"Agents compiled: {total} + 1 Exchange",
+        "Kernel started",
+        "Simulation running...",
+        f"Simulation finished in {wall_time:.2f}s",
+    ]
+    _log_lines.extend(f"[WARN] {w}" for w in _sim_warnings)
+    _log_lines.append("Results ready.")
+    st.markdown(execution_console(_log_lines, wall_time), unsafe_allow_html=True)
+
     st.session_state["result"] = result
     st.session_state["wall_time"] = wall_time
     st.session_state["ticker"] = ticker
@@ -544,7 +586,13 @@ if run_clicked:
 result: SimulationResult | None = st.session_state.get("result")
 
 if result is None:
-    st.info("Configure agents above and click **Run Simulation** to start.")
+    st.markdown(
+        "<div style=\"text-align:center;padding:60px 20px;color:#6B7280;font-family:'Inter',sans-serif\">"
+        '<div style="font-size:2rem;margin-bottom:8px;opacity:0.3">⬡</div>'
+        '<div style="font-size:0.85rem">Configure agents in the Preparation Desk and execute a simulation.</div>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
     st.stop()
 
 ticker_key = st.session_state["ticker"]
@@ -559,272 +607,190 @@ if market.l1_series is not None:
 
 order_df = metrics.extract_order_log(result)
 
-# ── Summary header ────────────────────────────────────────────────────────────
-
-st.subheader("Results")
+# ── Summary KPI cards ─────────────────────────────────────────────────────────
 
 summary = result.summary_dict()
 sm = metrics.compute_summary(market, l1)
 
-m_cols = st.columns(7)
-m_cols[0].metric("Mid Price", f"${sm.mid_close:,.2f}" if sm.mid_close is not None else "N/A", help="Midpoint of the best bid and ask at market close: (Bid + Ask) / 2.")
-m_cols[1].metric(
-    "Bid-Ask Spread", f"${sm.spread_close:,.2f}" if sm.spread_close is not None else "N/A", help="Difference between the best ask and best bid at close. Tighter spreads indicate higher liquidity."
+st.markdown(
+    metric_row(
+        [
+            {"label": "Mid Price", "value": f"${sm.mid_close:,.2f}" if sm.mid_close is not None else "N/A"},
+            {"label": "Bid-Ask Spread", "value": f"${sm.spread_close:,.2f}" if sm.spread_close is not None else "N/A"},
+            {"label": "VWAP", "value": f"${sm.vwap:,.2f}" if sm.vwap is not None else "N/A"},
+            {"label": "Volume", "value": f"{sm.volume:,}"},
+            {"label": "Realized Vol (σ)", "value": f"{sm.realized_vol:.6f}" if sm.realized_vol is not None else "N/A"},
+            {"label": "Price Range", "value": f"${sm.price_range:,.2f}" if sm.price_range is not None else "N/A"},
+            {"label": "Wall-Clock", "value": f"{wall_time:.1f}s"},
+        ]
+    ),
+    unsafe_allow_html=True,
 )
-m_cols[2].metric(
-    "VWAP", f"${sm.vwap:,.2f}" if sm.vwap is not None else "N/A", help="Volume-Weighted Average Price: Σ(price × qty) / Σ(qty) across all executed trades. Represents the average price paid per share."
-)
-m_cols[3].metric("Volume", f"{sm.volume:,}", help="Total number of shares exchanged during the simulation (sum of all executed order quantities).")
-m_cols[4].metric(
-    "Realized Vol (σ)", f"{sm.realized_vol:.6f}" if sm.realized_vol is not None else "N/A", help="Standard deviation of log-returns of the mid-price series. Measures intra-session price volatility."
-)
-m_cols[5].metric(
-    "Price Range", f"${sm.price_range:,.2f}" if sm.price_range is not None else "N/A", help="Difference between the highest and lowest mid-price observed during the session (High − Low)."
-)
-m_cols[6].metric("Wall-clock", f"{wall_time:.1f}s", help="Real-world elapsed time to run the simulation.")
 
 summary_warnings = summary.get("warnings", [])
 if summary_warnings:
-    with st.expander(f"⚠️ Simulation warnings ({len(summary_warnings)})"):
+    with st.expander(f"⚠ Simulation warnings ({len(summary_warnings)})"):
         for w in summary_warnings:
             st.warning(w)
 
-# ── Tabbed analytics ─────────────────────────────────────────────────────────
+# ── Config Log in sidebar expander ────────────────────────────────────────────
 
-tab_overview, tab_micro, tab_flow, tab_agents, tab_exec, tab_config = st.tabs(
-    ["📊 Market Overview", "🔬 Microstructure", "📋 Order Flow", "👥 Agent Analytics", "⚡ Execution Analytics", "📄 Config Log"]
-)
+with st.sidebar:
+    config_json: str | None = st.session_state.get("config_json")
+    if config_json:
+        with st.expander("Config JSON"):
+            st.code(config_json, language="json")
+            st.download_button(
+                "Download config.json",
+                data=config_json,
+                file_name="abides_config.json",
+                mime="application/json",
+            )
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 1: MARKET OVERVIEW
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Tabbed analytics — 3-tab institutional layout ────────────────────────────
 
-with tab_overview:
-    if l1 is not None:
-        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), width="stretch")
-
-        _mean = l1.spread.mean()
-        avg_spread = float(_mean) if pd.notna(_mean) else 0.0
-        st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), width="stretch")
-
-        with st.expander("Raw L1 data"):
-            st.dataframe(l1.l1_df, width="stretch")
-    else:
-        st.warning("L1 price series not available.")
+tab_micro, tab_alpha, tab_book = st.tabs(["Market Microstructure", "Agent Alpha", "Order Book Dynamics"])
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2: MICROSTRUCTURE
+# TAB 1: MARKET MICROSTRUCTURE
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_micro:
     if l1 is not None:
-        # ── Spread statistics ─────────────────────────────────────────────
-        st.markdown("#### Spread Statistics")
-        ss = metrics.compute_spread_stats(l1.spread, l1.mid)
+        # ── Price series (full width) ─────────────────────────────────────
+        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), use_container_width=True)
 
-        sp_cols = st.columns(6)
-        sp_cols[0].metric("Mean Spread", f"${ss.mean:.4f}" if ss.mean is not None else "N/A", help="Average bid-ask spread over two-sided L1 snapshots. Lower values indicate tighter markets.")
-        sp_cols[1].metric("Median Spread", f"${ss.median:.4f}" if ss.median is not None else "N/A", help="Median bid-ask spread. Less sensitive to outlier spikes than the mean.")
-        sp_cols[2].metric("Max Spread", f"${ss.max:.4f}" if ss.max is not None else "N/A", help="Widest bid-ask spread observed. Large values may indicate liquidity gaps or stressed conditions.")
-        sp_cols[3].metric("Spread Std", f"${ss.std:.4f}" if ss.std is not None else "N/A", help="Standard deviation of the spread series. Measures how stable or volatile the spread is over time.")
-        sp_cols[4].metric(
-            "Mean Spread %",
-            f"{ss.mean_pct:.4f}%" if ss.mean_pct is not None else "N/A",
-            help="Average spread as a percentage of mid-price: (Ask − Bid) / Mid × 100. Normalizes spread relative to price level.",
-        )
-        sp_cols[5].metric(
-            "Median Spread %", f"{ss.median_pct:.4f}%" if ss.median_pct is not None else "N/A", help="Median spread as a percentage of mid-price. Robust measure of relative transaction cost."
+        # ── Spread + Rolling volatility (side by side) ────────────────────
+        _mean = l1.spread.mean()
+        avg_spread = float(_mean) if pd.notna(_mean) else 0.0
+        rv = metrics.compute_rolling_vol(l1.log_returns)
+
+        mc1, mc2 = st.columns(2)
+        with mc1:
+            st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), use_container_width=True)
+        with mc2:
+            if rv is not None:
+                rolling_vol_series, window = rv
+                ret_time = l1.time.iloc[l1.log_returns.index]
+                st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), use_container_width=True)
+
+        # ── Book pressure + Returns histogram (side by side) ──────────────
+        pressure = metrics.compute_book_pressure(l1.l1_df)
+        rs = metrics.compute_return_stats(l1.log_returns)
+
+        mc3, mc4 = st.columns(2)
+        with mc3:
+            st.plotly_chart(charts.book_pressure(l1.time, pressure), use_container_width=True)
+        with mc4:
+            if rs is not None:
+                st.plotly_chart(charts.returns_histogram(l1.log_returns), use_container_width=True)
+
+        # ── Spread statistics cards ───────────────────────────────────────
+        ss = metrics.compute_spread_stats(l1.spread, l1.mid)
+        st.markdown(
+            metric_row(
+                [
+                    {"label": "Mean Spread", "value": f"${ss.mean:.4f}" if ss.mean is not None else "N/A"},
+                    {"label": "Median Spread", "value": f"${ss.median:.4f}" if ss.median is not None else "N/A"},
+                    {"label": "Max Spread", "value": f"${ss.max:.4f}" if ss.max is not None else "N/A"},
+                    {"label": "Spread Std", "value": f"${ss.std:.4f}" if ss.std is not None else "N/A"},
+                    {"label": "Mean Spread %", "value": f"{ss.mean_pct:.4f}%" if ss.mean_pct is not None else "N/A"},
+                    {"label": "Median Spread %", "value": f"{ss.median_pct:.4f}%" if ss.median_pct is not None else "N/A"},
+                ]
+            ),
+            unsafe_allow_html=True,
         )
         if ss.n_one_sided > 0:
-            st.caption(
-                f"⚠️ {ss.n_one_sided} of {ss.n_total} L1 ticks ({ss.n_one_sided / ss.n_total * 100:.1f}%) had a one-sided book (no bid or no ask). Spread statistics above reflect only two-sided intervals."
+            st.caption(f"⚠ {ss.n_one_sided} of {ss.n_total} L1 ticks ({ss.n_one_sided / ss.n_total * 100:.1f}%) had a one-sided book.")
+
+        # ── Market quality cards ──────────────────────────────────────────
+        both_sides = 100 - max(market.liquidity.pct_time_no_bid, market.liquidity.pct_time_no_ask)
+        last_trade = market.liquidity.last_trade_cents
+        st.markdown(
+            metric_row(
+                [
+                    {"label": "% Time No Bid", "value": f"{market.liquidity.pct_time_no_bid:.1f}%"},
+                    {"label": "% Time No Ask", "value": f"{market.liquidity.pct_time_no_ask:.1f}%"},
+                    {"label": "% Time Two-Sided", "value": f"{both_sides:.1f}%"},
+                    {"label": "Last Trade", "value": f"${last_trade / 100:.2f}" if last_trade is not None else "N/A"},
+                ]
+            ),
+            unsafe_allow_html=True,
+        )
+
+        # ── Returns distribution stats ────────────────────────────────────
+        if rs is not None:
+            st.markdown(
+                metric_row(
+                    [
+                        {"label": "Mean Return", "value": f"{rs.mean:.8f}"},
+                        {"label": "Std Dev", "value": f"{rs.std:.6f}"},
+                        {"label": "Skewness", "value": f"{rs.skewness:.4f}"},
+                        {"label": "Excess Kurtosis", "value": f"{rs.kurtosis:.4f}"},
+                    ]
+                ),
+                unsafe_allow_html=True,
             )
 
-        # ── Market quality ────────────────────────────────────────────────
-        st.markdown("#### Market Quality")
-        mq_cols = st.columns(4)
-        mq_cols[0].metric("% Time No Bid", f"{market.liquidity.pct_time_no_bid:.1f}%", help="Percentage of session time with no bid quote in the book. High values signal poor buy-side liquidity.")
-        mq_cols[1].metric("% Time No Ask", f"{market.liquidity.pct_time_no_ask:.1f}%", help="Percentage of session time with no ask quote in the book. High values signal poor sell-side liquidity.")
-        both_sides = 100 - max(market.liquidity.pct_time_no_bid, market.liquidity.pct_time_no_ask)
-        mq_cols[2].metric("% Time Two-Sided", f"{both_sides:.1f}%", help="Percentage of session time where both a bid and an ask were present. Higher is better — indicates a tradeable market.")
-        last_trade = market.liquidity.last_trade_cents
-        mq_cols[3].metric("Last Trade", f"${last_trade / 100:.2f}" if last_trade is not None else "N/A", help="Price of the last executed trade in the session.")
-
-        st.divider()
-
-        # ── Rolling volatility ────────────────────────────────────────────
-        rv = metrics.compute_rolling_vol(l1.log_returns)
-        if rv is not None:
-            st.markdown("#### Realized Volatility")
-            rolling_vol_series, window = rv
-            ret_time = l1.time.iloc[l1.log_returns.index]
-            st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), width="stretch")
-
-        # ── Book pressure ─────────────────────────────────────────────────
-        st.markdown("#### Book Pressure")
-        pressure = metrics.compute_book_pressure(l1.l1_df)
-        st.plotly_chart(charts.book_pressure(l1.time, pressure), width="stretch")
-
-        # ── Returns distribution ──────────────────────────────────────────
-        rs = metrics.compute_return_stats(l1.log_returns)
-        if rs is not None:
-            st.markdown("#### Mid-Price Returns Distribution")
-            ret_cols = st.columns(4)
-            ret_cols[0].metric("Mean Return", f"{rs.mean:.8f}")
-            ret_cols[1].metric("Std Dev", f"{rs.std:.6f}")
-            ret_cols[2].metric("Skewness", f"{rs.skewness:.4f}")
-            ret_cols[3].metric("Excess Kurtosis", f"{rs.kurtosis:.4f}")
-            st.plotly_chart(charts.returns_histogram(l1.log_returns), width="stretch")
-
-    # ── Trade attribution (outside L1 guard — uses market.trades) ─────
-    if market.trades is not None and len(market.trades) > 0:
-        st.divider()
-        st.markdown("#### Trade Attribution")
-        attr_df = metrics.build_trade_attribution_df(market.trades, result.agents)
-        mts = metrics.compute_maker_taker_summary(attr_df)
-
-        ta_cols = st.columns(3)
-        ta_cols[0].metric("Total Trades", f"{mts.total_trades:,}", help="Number of individual trade executions with causal attribution.")
-        maker_types = len(mts.maker_volume_by_type)
-        taker_types = len(mts.taker_volume_by_type)
-        ta_cols[1].metric("Maker Types", f"{maker_types}", help="Number of distinct agent types acting as passive (maker) side.")
-        ta_cols[2].metric("Taker Types", f"{taker_types}", help="Number of distinct agent types acting as aggressive (taker) side.")
-
-        st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), width="stretch")
-        st.plotly_chart(charts.trade_price_scatter(attr_df), width="stretch")
-
-        with st.expander("Raw trade attribution data"):
-            st.dataframe(attr_df, width="stretch")
-
-    if l1 is None and (market.trades is None or len(market.trades) == 0):
-        st.warning("L1 series data is required for microstructure analysis.")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 3: ORDER FLOW
-# ══════════════════════════════════════════════════════════════════════════════
-
-with tab_flow:
-    if order_df is not None and len(order_df) > 0:
-        # ── Summary metrics ───────────────────────────────────────────────
-        st.markdown("#### Order Flow Summary")
-        ofs = metrics.compute_order_flow_stats(order_df)
-
-        of_cols = st.columns(5)
-        of_cols[0].metric("Total Orders Submitted", f"{ofs.total_submitted:,}", help="Number of ORDER_SUBMITTED events. Each represents a new order entering the book.")
-        of_cols[1].metric("Executions", f"{ofs.executed:,}", help="Number of ORDER_EXECUTED events (full or partial fills). Each represents a trade.")
-        of_cols[2].metric("Cancellations", f"{ofs.cancelled:,}", help="Number of cancelled or partially cancelled orders that were removed before execution.")
-        of_cols[3].metric("Fill Rate", f"{ofs.fill_rate:.1f}%", help="Executions / Submitted × 100. Measures what fraction of orders resulted in a trade.")
-        of_cols[4].metric("Cancel Rate", f"{ofs.cancel_rate:.1f}%", help="Cancellations / Submitted × 100. High cancel rates are typical of market-making strategies.")
-
-        st.divider()
-
-        # ── Order type breakdown ──────────────────────────────────────────
-        if "EventType" in order_df.columns:
-            st.markdown("#### Event Type Breakdown")
-            event_counts = order_df["EventType"].value_counts()
-
-            c1, c2 = st.columns([1, 1])
-            with c1:
-                st.plotly_chart(charts.event_type_pie(event_counts), width="stretch")
-            with c2:
-                if "side" in order_df.columns:
-                    submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
-                    side_counts = submitted["side"].value_counts()
-                    st.plotly_chart(charts.side_balance(side_counts), width="stretch")
-
-        # ── Cumulative order flow imbalance ───────────────────────────────
-        imb_df = metrics.compute_cumulative_imbalance(order_df)
-        if imb_df is not None:
-            st.markdown("#### Cumulative Order Flow Imbalance")
-            flow_time = pd.to_datetime(imb_df["EventTime"], unit="ns")
-            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), width="stretch")
-
-        # ── Volume by agent type ──────────────────────────────────────────
-        if "agent_type" in order_df.columns:
-            st.markdown("#### Activity by Agent Type")
-            exec_df = order_df[order_df["EventType"] == "ORDER_EXECUTED"]
-            if len(exec_df) > 0 and "quantity" in exec_df.columns:
-                vol_by_type = exec_df.groupby("agent_type")["quantity"].sum().sort_values(ascending=True)
-                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), width="stretch")
-
-        with st.expander("Raw order logs"):
-            st.dataframe(order_df, width="stretch")
+        with st.expander("Raw L1 data"):
+            st.dataframe(l1.l1_df, use_container_width=True)
     else:
-        st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
+        st.warning("L1 price series not available.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4: AGENT ANALYTICS
+# TAB 2: AGENT ALPHA
 # ══════════════════════════════════════════════════════════════════════════════
 
-with tab_agents:
+with tab_alpha:
     if result.agents:
         agent_df = metrics.build_agent_dataframe(result)
+        exec_agents = metrics.get_execution_agents(result)
 
-        # ── Aggregate metrics ─────────────────────────────────────────────
-        st.markdown("#### Performance by Agent Type")
+        # ── Execution summary cards (if any exec agents) ─────────────────
+        if exec_agents:
+            exec_summary = metrics.compute_execution_summary(exec_agents)
+            if exec_summary is not None:
+                _dd = f"${exec_summary.max_drawdown_cents / 100:,.2f}" if exec_summary.max_drawdown_cents is not None else "N/A"
+                st.markdown(
+                    metric_row(
+                        [
+                            {"label": "Exec Agents", "value": f"{len(exec_agents)}"},
+                            {"label": "Total Filled", "value": f"{exec_summary.total_filled:,} / {exec_summary.total_target:,}"},
+                            {"label": "Avg Fill Rate", "value": f"{exec_summary.avg_fill_rate:.1f}%"},
+                            {"label": "Avg VWAP Slippage", "value": f"{exec_summary.avg_vwap_slippage_bps:.2f} bps"},
+                            {"label": "Max Drawdown", "value": _dd},
+                        ]
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+        # ── Performance table ─────────────────────────────────────────────
         agg = metrics.compute_agent_performance(agent_df)
-        st.dataframe(agg, width="stretch", hide_index=True)
+        st.dataframe(agg, use_container_width=True, hide_index=True)
 
-        st.divider()
-
-        # ── P&L distribution box plot ─────────────────────────────────────
-        st.markdown("#### P&L Distribution by Type")
-        st.plotly_chart(charts.pnl_box_plot(agent_df), width="stretch")
+        # ── P&L box plot + equity curves (side by side) ───────────────────
+        if exec_agents:
+            aa1, aa2 = st.columns(2)
+            with aa1:
+                st.plotly_chart(charts.pnl_box_plot(agent_df), use_container_width=True)
+            with aa2:
+                # Show equity curve for the first execution agent
+                for agent in exec_agents[:1]:
+                    ec_df = metrics.build_equity_curve_df(agent)
+                    if ec_df is not None:
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), use_container_width=True)
+                    else:
+                        st.caption("No equity curve data.")
+        else:
+            st.plotly_chart(charts.pnl_box_plot(agent_df), use_container_width=True)
 
         # ── Holdings breakdown ────────────────────────────────────────────
         hold_agg = metrics.build_holdings_table(result)
         if hold_agg is not None:
-            st.markdown("#### Holdings by Agent Type")
-            st.dataframe(hold_agg, width="stretch", hide_index=True)
+            st.dataframe(hold_agg, use_container_width=True, hide_index=True)
 
-        # ── Agent leaderboard ─────────────────────────────────────────────
-        st.markdown("#### Agent Leaderboard")
-        st.dataframe(metrics.build_leaderboard(agent_df), width="stretch")
-    else:
-        st.info("No agent data available.")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 5: EXECUTION ANALYTICS
-# ══════════════════════════════════════════════════════════════════════════════
-
-with tab_exec:
-    exec_agents = metrics.get_execution_agents(result)
-
-    if exec_agents:
-        exec_summary = metrics.compute_execution_summary(exec_agents)
-
-        # ── Hero metrics row ──────────────────────────────────────────────
-        st.markdown("#### Execution Quality Overview")
-        if exec_summary is not None:
-            ex_cols = st.columns(5)
-            ex_cols[0].metric("Execution Agents", f"{len(exec_agents)}", help="Number of agents with execution analytics (POV, TWAP, VWAP).")
-            ex_cols[1].metric("Total Filled", f"{exec_summary.total_filled:,} / {exec_summary.total_target:,}", help="Total shares filled vs target across all execution agents.")
-            ex_cols[2].metric("Avg Fill Rate", f"{exec_summary.avg_fill_rate:.1f}%", help="Average fill rate across execution agents.")
-            ex_cols[3].metric("Avg VWAP Slippage", f"{exec_summary.avg_vwap_slippage_bps:.2f} bps", help="Average slippage relative to market VWAP, in basis points. Negative means better than VWAP.")
-            if exec_summary.max_drawdown_cents is not None:
-                ex_cols[4].metric("Max Drawdown", f"${exec_summary.max_drawdown_cents / 100:,.2f}", help="Largest peak-to-trough NAV decline across all execution agents.")
-            else:
-                ex_cols[4].metric("Max Drawdown", "N/A", help="No equity curve data available.")
-
-        st.divider()
-
-        # ── Per-agent detail sections ─────────────────────────────────────
-        for agent in exec_agents:
-            with st.expander(f"**{agent.agent_name}** ({agent.agent_type})", expanded=len(exec_agents) <= 3):
-                detail_df = metrics.build_execution_detail_df(agent)
-                if len(detail_df) > 0:
-                    st.dataframe(detail_df, width="stretch", hide_index=True)
-
-                ec_df = metrics.build_equity_curve_df(agent)
-                if ec_df is not None:
-                    st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width="stretch")
-                else:
-                    st.caption("No equity curve data for this agent.")
-
-        # ── Comparative slippage chart ────────────────────────────────────
+        # ── Slippage comparison ───────────────────────────────────────────
         if len(exec_agents) > 1:
-            st.divider()
-            st.markdown("#### Slippage Comparison")
             slip_data = [
                 {
                     "name": a.agent_name,
@@ -832,25 +798,105 @@ with tab_exec:
                 }
                 for a in exec_agents
             ]
-            st.plotly_chart(charts.slippage_comparison(slip_data), width="stretch")
+            st.plotly_chart(charts.slippage_comparison(slip_data), use_container_width=True)
+
+        # ── Per-agent execution details ───────────────────────────────────
+        if exec_agents:
+            with st.expander(f"Execution agent details ({len(exec_agents)})"):
+                for agent in exec_agents:
+                    detail_df = metrics.build_execution_detail_df(agent)
+                    if len(detail_df) > 0:
+                        st.caption(f"**{agent.agent_name}** ({agent.agent_type})")
+                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
+                    ec_df = metrics.build_equity_curve_df(agent)
+                    if ec_df is not None:
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), use_container_width=True)
+
+        # ── Leaderboard ───────────────────────────────────────────────────
+        with st.expander("Agent Leaderboard"):
+            st.dataframe(metrics.build_leaderboard(agent_df), use_container_width=True)
     else:
-        st.info("No execution agents in this simulation. Add a POV, TWAP, or VWAP execution agent to see analytics.")
+        st.info("No agent data available.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 6: CONFIG LOG
+# TAB 3: ORDER BOOK DYNAMICS
 # ══════════════════════════════════════════════════════════════════════════════
 
-with tab_config:
-    config_json: str | None = st.session_state.get("config_json")
-    if config_json:
-        st.markdown("#### Simulation Configuration")
-        st.caption("JSON snapshot of the configuration used for this run. Copy or download for reproducibility.")
-        st.code(config_json, language="json")
-        st.download_button(
-            "⬇️ Download config.json",
-            data=config_json,
-            file_name="abides_config.json",
-            mime="application/json",
+with tab_book:
+    _has_orders = order_df is not None and len(order_df) > 0
+    _has_trades = market.trades is not None and len(market.trades) > 0
+
+    if _has_orders:
+        # ── Order flow KPI cards ──────────────────────────────────────────
+        ofs = metrics.compute_order_flow_stats(order_df)
+        st.markdown(
+            metric_row(
+                [
+                    {"label": "Orders Submitted", "value": f"{ofs.total_submitted:,}"},
+                    {"label": "Executions", "value": f"{ofs.executed:,}"},
+                    {"label": "Cancellations", "value": f"{ofs.cancelled:,}"},
+                    {"label": "Fill Rate", "value": f"{ofs.fill_rate:.1f}%"},
+                    {"label": "Cancel Rate", "value": f"{ofs.cancel_rate:.1f}%"},
+                ]
+            ),
+            unsafe_allow_html=True,
         )
-    else:
-        st.info("No configuration recorded.")
+
+        # ── Event type pie + Side balance (side by side) ──────────────────
+        if "EventType" in order_df.columns:
+            event_counts = order_df["EventType"].value_counts()
+            ob1, ob2 = st.columns(2)
+            with ob1:
+                st.plotly_chart(charts.event_type_pie(event_counts), use_container_width=True)
+            with ob2:
+                if "side" in order_df.columns:
+                    submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
+                    side_counts = submitted["side"].value_counts()
+                    st.plotly_chart(charts.side_balance(side_counts), use_container_width=True)
+
+        # ── Cumulative imbalance (full width) ─────────────────────────────
+        imb_df = metrics.compute_cumulative_imbalance(order_df)
+        if imb_df is not None:
+            flow_time = pd.to_datetime(imb_df["EventTime"], unit="ns")
+            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), use_container_width=True)
+
+        # ── Volume by agent type ──────────────────────────────────────────
+        if "agent_type" in order_df.columns:
+            exec_df = order_df[order_df["EventType"] == "ORDER_EXECUTED"]
+            if len(exec_df) > 0 and "quantity" in exec_df.columns:
+                vol_by_type = exec_df.groupby("agent_type")["quantity"].sum().sort_values(ascending=True)
+                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), use_container_width=True)
+
+        with st.expander("Raw order logs"):
+            st.dataframe(order_df, use_container_width=True)
+
+    # ── Trade attribution section ─────────────────────────────────────────
+    if _has_trades:
+        attr_df = metrics.build_trade_attribution_df(market.trades, result.agents)
+        mts = metrics.compute_maker_taker_summary(attr_df)
+
+        if not _has_orders:
+            # Show trade KPIs at top if no order flow cards above
+            st.markdown(
+                metric_row(
+                    [
+                        {"label": "Total Trades", "value": f"{mts.total_trades:,}"},
+                        {"label": "Maker Types", "value": f"{len(mts.maker_volume_by_type)}"},
+                        {"label": "Taker Types", "value": f"{len(mts.taker_volume_by_type)}"},
+                    ]
+                ),
+                unsafe_allow_html=True,
+            )
+
+        # ── Maker/taker volume + Trade price scatter (side by side) ───────
+        ob3, ob4 = st.columns(2)
+        with ob3:
+            st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), use_container_width=True)
+        with ob4:
+            st.plotly_chart(charts.trade_price_scatter(attr_df), use_container_width=True)
+
+        with st.expander("Raw trade attribution data"):
+            st.dataframe(attr_df, use_container_width=True)
+
+    if not _has_orders and not _has_trades:
+        st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
