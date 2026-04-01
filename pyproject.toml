@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 
 dependencies = [
-    "abides-hasufel",
+    "abides-hasufel==2.5.3",
     "numpy>=1.26.0",
     "pandas>=2.2.0,<3.0.0",
     "pandera>=0.22.0",
@@ -115,4 +115,4 @@ show_missing = true
 skip_covered = false
 
 [tool.uv.sources]
-abides-hasufel = { git = "https://github.com/GabrieleDiCorato/abides-hasufel.git", rev = "v2.5.1" }
+abides-hasufel = { git = "https://github.com/GabrieleDiCorato/abides-hasufel.git", rev = "v2.5.3" }
