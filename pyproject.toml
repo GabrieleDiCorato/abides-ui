@@ -115,4 +115,4 @@ show_missing = true
 skip_covered = false
 
 [tool.uv.sources]
-abides-hasufel = { git = "https://github.com/GabrieleDiCorato/abides-hasufel.git", rev = "v2.5.1" }
+abides-hasufel = { git = "https://github.com/GabrieleDiCorato/abides-hasufel.git", rev = "v2.5.2" }
