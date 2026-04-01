@@ -721,23 +721,13 @@ if summary_warnings:
         for w in summary_warnings:
             st.warning(w)
 
-# ── Config Log in sidebar expander ────────────────────────────────────────────
+# ── Tabbed analytics — 4-tab institutional layout ────────────────────────────
 
-with st.sidebar:
-    config_json: str | None = st.session_state.get("config_json")
-    if config_json:
-        with st.expander("Config JSON"):
-            st.code(config_json, language="json")
-            st.download_button(
-                "Download config.json",
-                data=config_json,
-                file_name="abides_config.json",
-                mime="application/json",
-            )
+config_json: str | None = st.session_state.get("config_json")
 
-# ── Tabbed analytics — 3-tab institutional layout ────────────────────────────
-
-tab_micro, tab_alpha, tab_book = st.tabs(["Market Microstructure", "Agent Alpha", "Order Book Dynamics"])
+tab_micro, tab_alpha, tab_book, tab_config = st.tabs(
+    ["Market Microstructure", "Agent Alpha", "Order Book Dynamics", "Configuration"]
+)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: MARKET MICROSTRUCTURE
@@ -1029,3 +1019,19 @@ with tab_book:
 
     if not _has_orders and not _has_trades:
         st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 4: CONFIGURATION
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab_config:
+    if config_json:
+        st.download_button(
+            "📥 Download config.json",
+            data=config_json,
+            file_name="abides_config.json",
+            mime="application/json",
+        )
+        st.code(config_json, language="json")
+    else:
+        st.info("Run a simulation to see its configuration here.")
