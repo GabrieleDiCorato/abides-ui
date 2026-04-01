@@ -119,7 +119,9 @@ details[data-testid="stExpander"] {
     border-radius: 6px !important;
     background: var(--surface) !important;
 }
-details summary span {
+/* Style only the label text — leave the icon span untouched so the
+   Material Symbols font renders the arrow glyph correctly. */
+details[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
     color: var(--text) !important;
     font-family: 'Inter', sans-serif !important;
 }
