@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as _html
 import json
 import time
 from importlib.metadata import version as _pkg_version
@@ -441,8 +442,9 @@ for cat_key, cat_agents in _grouped_agents:
 
                         # Compact row: label on left, widget on right
                         lbl_col, val_col = st.columns([2, 3])
+                        _escaped_help = _html.escape(field_help, quote=True) if field_help else ""
                         lbl_col.markdown(
-                            f"<div style='line-height:2.4rem;font-size:0.85rem' title='{field_help or ''}'>{display_label}</div>",
+                            f'<div style="line-height:2.4rem;font-size:0.85rem" title="{_escaped_help}">{_html.escape(display_label)}</div>',
                             unsafe_allow_html=True,
                         )
 
