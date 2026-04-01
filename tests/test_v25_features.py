@@ -65,6 +65,7 @@ def _fake_agent(
         agent_id=agent_id,
         agent_type=agent_type,
         agent_name=f"{agent_type}_{agent_id}",
+        agent_category="execution" if exec_metrics is not None else "background",
         final_holdings={"CASH": 10_000_000},
         starting_cash_cents=10_000_000,
         mark_to_market_cents=10_000_000 + pnl_cents,
