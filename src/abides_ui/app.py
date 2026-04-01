@@ -90,6 +90,21 @@ with st.sidebar:
     )
     if selected_template != "None":
         st.caption(template_descriptions[selected_template])
+        # Show scenario description & regime tags from template metadata
+        _sel_tpl = next((t for t in base_templates if t["name"] == selected_template), None)
+        if _sel_tpl:
+            _scenario_desc = _sel_tpl.get("scenario_description", "")
+            _regime_tags = _sel_tpl.get("regime_tags", [])
+            if _scenario_desc:
+                st.markdown(
+                    f"<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:4px 0 6px 0\">{_scenario_desc}</div>",
+                    unsafe_allow_html=True,
+                )
+            if _regime_tags:
+                _tags_html = " ".join(
+                    f'<span style="font-size:0.62rem;background:rgba(0,112,255,0.12);color:#0070FF;padding:1px 6px;border-radius:3px;margin-right:3px">{tag}</span>' for tag in _regime_tags
+                )
+                st.markdown(_tags_html, unsafe_allow_html=True)
 
     # Load template defaults when selected
     if selected_template != "None":
@@ -732,6 +747,36 @@ with tab_micro:
                 unsafe_allow_html=True,
             )
 
+        # ── Advanced microstructure metrics (v2.5.3 Tier 1-3) ────────────
+        micro = metrics.compute_microstructure_metrics(result, ticker_key)
+        if micro is not None:
+            _micro_cards: list[dict[str, str]] = []
+            if micro.mean_spread_cents is not None:
+                _micro_cards.append({"label": "Mean Spread (¢)", "value": f"{micro.mean_spread_cents:.2f}"})
+            if micro.volatility_ann is not None:
+                _micro_cards.append({"label": "Ann. Volatility", "value": f"{micro.volatility_ann:.4f}"})
+            if micro.sharpe_ratio is not None:
+                _micro_cards.append({"label": "Sharpe Ratio", "value": f"{micro.sharpe_ratio:.2f}"})
+            if micro.avg_bid_liquidity is not None:
+                _micro_cards.append({"label": "Avg Bid Depth", "value": f"{micro.avg_bid_liquidity:,.0f}"})
+            if micro.avg_ask_liquidity is not None:
+                _micro_cards.append({"label": "Avg Ask Depth", "value": f"{micro.avg_ask_liquidity:,.0f}"})
+            if micro.lob_imbalance_mean is not None:
+                _micro_cards.append({"label": "LOB Imbalance μ", "value": f"{micro.lob_imbalance_mean:+.4f}"})
+            if micro.lob_imbalance_std is not None:
+                _micro_cards.append({"label": "LOB Imbalance σ", "value": f"{micro.lob_imbalance_std:.4f}"})
+            if micro.vpin is not None:
+                _micro_cards.append({"label": "VPIN", "value": f"{micro.vpin:.4f}"})
+            if micro.resilience_ns is not None:
+                _resil_ms = micro.resilience_ns / 1e6
+                _micro_cards.append({"label": "Resilience (ms)", "value": f"{_resil_ms:,.1f}"})
+            if _micro_cards:
+                st.markdown(
+                    "<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:12px 0 4px 0;text-transform:uppercase;letter-spacing:0.06em\">Advanced Microstructure</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(metric_row(_micro_cards), unsafe_allow_html=True)
+
         with st.expander("Raw L1 data"):
             st.dataframe(l1.l1_df, use_container_width=True)
     else:
@@ -745,6 +790,17 @@ with tab_alpha:
     if result.agents:
         agent_df = metrics.build_agent_dataframe(result)
         exec_agents = metrics.get_execution_agents(result)
+
+        # ── Agent category breakdown ──────────────────────────────────────
+        _cat_counts = agent_df["Category"].value_counts()
+        if len(_cat_counts) > 0:
+            _cat_cards = [
+                {"label": cat.title(), "value": str(count)}
+                for cat, count in _cat_counts.items()
+                if cat  # skip empty category strings
+            ]
+            if _cat_cards:
+                st.markdown(metric_row(_cat_cards), unsafe_allow_html=True)
 
         # ── Execution summary cards (if any exec agents) ─────────────────
         if exec_agents:

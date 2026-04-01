@@ -12,6 +12,27 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from abides_markets.simulation import SimulationResult
+from abides_markets.simulation.metrics import (
+    compute_avg_liquidity as _compute_avg_liquidity,
+)
+from abides_markets.simulation.metrics import (
+    compute_lob_imbalance as _compute_lob_imbalance,
+)
+from abides_markets.simulation.metrics import (
+    compute_mean_spread as _compute_mean_spread,
+)
+from abides_markets.simulation.metrics import (
+    compute_resilience as _compute_resilience,
+)
+from abides_markets.simulation.metrics import (
+    compute_sharpe_ratio as _compute_sharpe_ratio,
+)
+from abides_markets.simulation.metrics import (
+    compute_volatility as _compute_volatility,
+)
+from abides_markets.simulation.metrics import (
+    compute_vpin as _compute_vpin,
+)
 from abides_markets.simulation.result import AgentData, TradeAttribution
 
 # ── L1 series derivation ─────────────────────────────────────────────────────
@@ -237,6 +258,7 @@ def build_agent_dataframe(result: SimulationResult) -> pd.DataFrame:
         row: dict[str, object] = {
             "ID": a.agent_id,
             "Type": a.agent_type,
+            "Category": a.agent_category,
             "Name": a.agent_name,
             "Starting Cash ($)": a.starting_cash_cents / 100,
             "Mark-to-Market ($)": a.mark_to_market_cents / 100,
@@ -254,8 +276,9 @@ def build_agent_dataframe(result: SimulationResult) -> pd.DataFrame:
 
 
 def compute_agent_performance(agent_df: pd.DataFrame) -> pd.DataFrame:
+    group_cols = ["Category", "Type"] if "Category" in agent_df.columns else ["Type"]
     agg = (
-        agent_df.groupby("Type")
+        agent_df.groupby(group_cols)
         .agg(
             Count=("ID", "count"),
             **{"Win Rate (%)": ("P&L ($)", lambda x: (x > 0).mean() * 100)},
@@ -426,4 +449,69 @@ def compute_maker_taker_summary(attr_df: pd.DataFrame) -> MakerTakerSummary:
         total_trades=len(attr_df),
         maker_volume_by_type=attr_df.groupby("maker_type")["quantity"].sum().sort_values(ascending=False),
         taker_volume_by_type=attr_df.groupby("taker_type")["quantity"].sum().sort_values(ascending=False),
+    )
+
+
+# ── Tier 1-3 microstructure metrics (v2.5.3) ─────────────────────────────────
+
+
+@dataclass
+class MicrostructureMetrics:
+    """Advanced market quality metrics computed via abides-hasufel v2.5.3."""
+
+    mean_spread_cents: float | None
+    volatility_ann: float | None
+    sharpe_ratio: float | None
+    avg_bid_liquidity: float | None
+    avg_ask_liquidity: float | None
+    lob_imbalance_mean: float | None
+    lob_imbalance_std: float | None
+    vpin: float | None
+    resilience_ns: float | None
+
+
+def compute_microstructure_metrics(
+    result: SimulationResult,
+    ticker: str,
+) -> MicrostructureMetrics | None:
+    """Compute Tier 1-3 microstructure metrics using the standalone API.
+
+    Returns None if L1 data is unavailable.
+    """
+    market = result.markets.get(ticker)
+    if market is None or market.l1_series is None:
+        return None
+
+    l1 = market.l1_series
+
+    mean_spread = _compute_mean_spread(l1)
+    volatility = _compute_volatility(l1)
+    avg_bid, avg_ask = _compute_avg_liquidity(l1)
+    imb_mean, imb_std = _compute_lob_imbalance(l1)
+    resilience = _compute_resilience(l1)
+
+    # Sharpe ratio from first execution agent with an equity curve
+    sharpe = None
+    for a in result.agents:
+        if a.equity_curve is not None:
+            sharpe = _compute_sharpe_ratio(a.equity_curve)
+            if sharpe is not None:
+                break
+
+    # VPIN requires fill tuples (price_cents, qty, time_ns) and L1
+    vpin = None
+    if market.trades:
+        fills = [(t.price_cents, t.quantity, t.time_ns) for t in market.trades]
+        vpin = _compute_vpin(fills, l1)
+
+    return MicrostructureMetrics(
+        mean_spread_cents=mean_spread,
+        volatility_ann=volatility,
+        sharpe_ratio=sharpe,
+        avg_bid_liquidity=avg_bid,
+        avg_ask_liquidity=avg_ask,
+        lob_imbalance_mean=imb_mean,
+        lob_imbalance_std=imb_std,
+        vpin=vpin,
+        resilience_ns=resilience,
     )
