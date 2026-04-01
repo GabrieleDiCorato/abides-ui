@@ -69,6 +69,10 @@ html, body, .stApp {
     color: var(--text) !important;
     font-family: 'Inter', sans-serif !important;
 }
+/* Kill ALL default white/light backgrounds from BaseWeb & Streamlit */
+.stApp div, .stApp section, .stApp span, .stApp p {
+    border-color: var(--border) !important;
+}
 
 .stApp > header { background-color: transparent !important; }
 
@@ -89,21 +93,21 @@ html, body, .stApp {
     color: var(--text) !important;
 }
 
-/* ── All labels ───────────────────────────────────────────────────────── */
+/* ── All labels & text ────────────────────────────────────────────────── */
 label, .stSelectbox label, .stTextInput label, .stNumberInput label,
-.stDateInput label, .stTimeInput label, [data-testid="stWidgetLabel"] {
+.stDateInput label, .stTimeInput label, [data-testid="stWidgetLabel"],
+[data-testid="stWidgetLabel"] p {
     color: var(--text-secondary) !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
 }
-/* Subheader labels (Market, Oracle, etc.) */
 [data-testid="stMarkdownContainer"] h5,
 [data-testid="stMarkdownContainer"] h4,
 [data-testid="stMarkdownContainer"] h3 {
     color: var(--text) !important;
 }
-/* Captions more readable */
 [data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
 .stCaption, small, caption {
     color: var(--text-dim) !important;
 }
@@ -141,44 +145,71 @@ details[data-testid="stExpander"] {
     border-radius: 6px !important;
     background: var(--surface) !important;
 }
-/* Style only the label text — leave the icon span untouched so the
-   Material Symbols font renders the arrow glyph correctly. */
 details[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
     color: var(--text) !important;
     font-family: 'Inter', sans-serif !important;
 }
 
-/* ── Input widgets (comprehensive) ────────────────────────────────────── */
-/* Text, number, date, time — all input fields */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input,
-[data-testid="stDateInput"] input,
-[data-testid="stTimeInput"] input,
-[data-baseweb="input"] input {
-    background: var(--surface-raised) !important;
+/* ══ ALL INPUT FIELDS ═════════════════════════════════════════════════ */
+/* Broadest possible: every <input> and every BaseWeb input wrapper */
+.stApp input[type="text"],
+.stApp input[type="number"],
+.stApp input[type="password"],
+.stApp input[type="email"],
+.stApp input[type="tel"],
+.stApp input:not([type]),
+.stApp textarea {
+    background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
     color: var(--text) !important;
     font-family: 'JetBrains Mono', monospace !important;
     font-size: 0.82rem !important;
     caret-color: var(--accent-blue) !important;
 }
-/* Input wrappers / containers */
+/* BaseWeb input root + inner wrappers */
 [data-baseweb="input"],
-[data-baseweb="input"] > div {
+[data-baseweb="input"] > div,
+[data-baseweb="input"] > div > div {
+    background-color: var(--surface-raised) !important;
+    border-color: var(--border) !important;
+    color: var(--text) !important;
+}
+/* Number input entire container (Streamlit wraps it in nested divs) */
+.stNumberInput > div,
+.stNumberInput > div > div,
+.stNumberInput [data-baseweb="input"],
+.stNumberInput [data-baseweb="input"] div {
     background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
 }
-/* Focus ring: subtle blue instead of bright white */
+/* Focus ring */
 [data-baseweb="input"]:focus-within,
-[data-baseweb="input"]:focus-within > div {
+.stNumberInput [data-baseweb="input"]:focus-within,
+.stTextInput [data-baseweb="input"]:focus-within {
     border-color: var(--accent-blue) !important;
     box-shadow: 0 0 0 1px rgba(0, 112, 255, 0.25) !important;
 }
 
-/* Select / dropdown */
+/* Number input +/- stepper buttons */
+.stNumberInput button,
+[data-testid="stNumberInput"] button,
+.stNumberInput [data-testid="stNumberInputStepUp"],
+.stNumberInput [data-testid="stNumberInputStepDown"] {
+    background-color: var(--surface-raised) !important;
+    border-color: var(--border) !important;
+    color: var(--text-secondary) !important;
+}
+.stNumberInput button:hover {
+    background-color: rgba(0, 112, 255, 0.12) !important;
+    border-color: var(--accent-blue) !important;
+    color: var(--accent-blue) !important;
+}
+
+/* ── Select / Dropdown ────────────────────────────────────────────────── */
 [data-baseweb="select"],
-[data-baseweb="select"] > div {
-    background: var(--surface-raised) !important;
+[data-baseweb="select"] > div,
+[data-baseweb="select"] > div > div {
+    background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
     color: var(--text) !important;
 }
@@ -186,81 +217,101 @@ details[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
     color: var(--text) !important;
 }
 /* Dropdown menu */
-[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
 [data-baseweb="menu"],
-[role="listbox"] {
+[data-baseweb="menu"] ul,
+[role="listbox"],
+[role="listbox"] li {
     background-color: var(--surface) !important;
-    border: 1px solid var(--border) !important;
-}
-[data-baseweb="menu"] li,
-[role="option"] {
     color: var(--text) !important;
-    background-color: var(--surface) !important;
 }
+[role="listbox"] li:hover,
 [data-baseweb="menu"] li:hover,
-[role="option"]:hover {
+[role="option"]:hover,
+[data-highlighted="true"] {
     background-color: var(--surface-raised) !important;
-}
-
-/* Number input stepper buttons (+ / -) */
-[data-testid="stNumberInput"] button {
-    background-color: var(--surface-raised) !important;
-    border-color: var(--border) !important;
-    color: var(--text-secondary) !important;
-}
-[data-testid="stNumberInput"] button:hover {
-    background-color: rgba(0, 112, 255, 0.12) !important;
-    border-color: var(--accent-blue) !important;
-    color: var(--accent-blue) !important;
 }
 
 /* Date / Time input containers */
-[data-testid="stDateInput"] > div > div,
-[data-testid="stTimeInput"] > div > div {
+.stDateInput > div > div,
+.stDateInput [data-baseweb="input"],
+.stTimeInput > div > div,
+.stTimeInput [data-baseweb="input"] {
     background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
 }
+/* Date picker calendar popup */
+[data-baseweb="calendar"],
+[data-baseweb="calendar"] > div {
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+}
+/* Time picker popup */
+[data-baseweb="time-picker"],
+[data-baseweb="select"] [role="listbox"] {
+    background-color: var(--surface) !important;
+}
 
-/* ── Toggle / Switch ──────────────────────────────────────────────────── */
-/* Track (off state) */
-[data-testid="stToggle"] label > div[role="checkbox"],
-[data-baseweb="toggle"] > div {
+/* ══ TOGGLE / SWITCH ═════════════════════════════════════════════════ */
+/* Target every possible toggle/switch element across Streamlit versions */
+/* Off track */
+.stToggle [role="checkbox"],
+[data-testid="stToggle"] [role="checkbox"],
+div[data-baseweb="toggle"] > div:first-child,
+[role="checkbox"][aria-checked="false"] {
     background-color: #2D333B !important;
+    border-color: #3D444D !important;
 }
-/* Track (on state) */
-[data-testid="stToggle"] label > div[role="checkbox"][aria-checked="true"],
-[data-baseweb="toggle"] > div[aria-checked="true"] {
-    background-color: var(--accent-blue) !important;
-}
-/* Thumb (the circle) */
-[data-testid="stToggle"] label > div[role="checkbox"]::after,
-[data-baseweb="toggle"] > div > div {
-    background-color: #E0E0E0 !important;
-}
-/* Toggle label text */
-[data-testid="stToggle"] label > span,
-[data-testid="stToggle"] label p {
-    color: var(--text-secondary) !important;
-}
-
-/* ── Checkbox ─────────────────────────────────────────────────────────── */
-[data-testid="stCheckbox"] label > span:first-child {
-    border-color: #2D333B !important;
-    background-color: var(--surface-raised) !important;
-}
-[data-testid="stCheckbox"] label > span:first-child[aria-checked="true"],
-[data-baseweb="checkbox"] > div[aria-checked="true"] {
+/* On track */
+.stToggle [role="checkbox"][aria-checked="true"],
+[data-testid="stToggle"] [role="checkbox"][aria-checked="true"],
+div[data-baseweb="toggle"] > div[aria-checked="true"]:first-child {
     background-color: var(--accent-blue) !important;
     border-color: var(--accent-blue) !important;
 }
-[data-testid="stCheckbox"] label > span:last-child {
+/* Toggle label text */
+.stToggle p,
+.stToggle span,
+.stToggle label,
+[data-testid="stToggle"] p {
+    color: var(--text-secondary) !important;
+}
+
+/* ══ CHECKBOX ════════════════════════════════════════════════════════ */
+/* Unchecked box — visible gray border on dark */
+.stCheckbox [role="checkbox"],
+[data-testid="stCheckbox"] [role="checkbox"],
+[data-baseweb="checkbox"] [role="checkbox"] {
+    border-color: #3D444D !important;
+    background-color: var(--surface-raised) !important;
+    border-width: 2px !important;
+}
+/* Checked box — blue fill */
+.stCheckbox [role="checkbox"][aria-checked="true"],
+[data-testid="stCheckbox"] [role="checkbox"][aria-checked="true"],
+[data-baseweb="checkbox"] [role="checkbox"][aria-checked="true"] {
+    background-color: var(--accent-blue) !important;
+    border-color: var(--accent-blue) !important;
+}
+/* Checkmark icon inside — white */
+.stCheckbox [role="checkbox"] svg,
+[data-baseweb="checkbox"] svg {
+    fill: white !important;
+    color: white !important;
+}
+/* Checkbox label */
+.stCheckbox label span:last-child,
+.stCheckbox label p,
+[data-testid="stCheckbox"] label p {
     color: var(--text-secondary) !important;
 }
 
 /* ── Buttons ──────────────────────────────────────────────────────────── */
-.stButton > button[kind="primary"] {
+.stButton > button[kind="primary"],
+button[kind="primary"] {
     background: var(--accent-blue) !important;
     border: none !important;
+    color: white !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 600;
 }
@@ -278,25 +329,25 @@ details[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
 }
 
 /* ── File uploader ────────────────────────────────────────────────────── */
-[data-testid="stFileUploader"] {
-    border-color: var(--border) !important;
-}
-[data-testid="stFileUploader"] section {
+[data-testid="stFileUploader"],
+[data-testid="stFileUploader"] section,
+[data-testid="stFileUploader"] > div {
     background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
 }
 
 /* ── Text area ────────────────────────────────────────────────────────── */
+.stTextArea textarea,
 [data-testid="stTextArea"] textarea {
     background: var(--surface-raised) !important;
     border-color: var(--border) !important;
     color: var(--text) !important;
     font-family: 'JetBrains Mono', monospace !important;
-    font-size: 0.82rem !important;
 }
 
 /* ── Warning / Info / Error / Success alerts ──────────────────────────── */
-[data-testid="stAlert"] {
+[data-testid="stAlert"],
+.stAlert {
     background-color: var(--surface-raised) !important;
     border-color: var(--border) !important;
 }
@@ -322,14 +373,13 @@ details[data-testid="stExpander"] summary [data-testid="stMarkdownContainer"] {
 }
 
 /* ── Dividers ─────────────────────────────────────────────────────────── */
-[data-testid="stHorizontalBlock"] hr,
 hr {
     border-color: var(--border) !important;
     opacity: 0.5;
 }
 
 /* ── Code blocks ──────────────────────────────────────────────────────── */
-pre, code {
+pre, code, [data-testid="stCode"] {
     background-color: var(--surface-raised) !important;
     color: var(--text) !important;
 }
