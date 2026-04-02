@@ -548,6 +548,7 @@ for cat_key, cat_agents in _grouped_agents:
                                 value=bool(default) if default is not None else True,
                                 key=widget_key,
                                 label_visibility="collapsed",
+                                help=field_help,
                             )
                             agent_params[param_name] = val
 
@@ -558,6 +559,7 @@ for cat_key, cat_agents in _grouped_agents:
                                     value=str(default) if default is not None else "",
                                     key=widget_key,
                                     label_visibility="collapsed",
+                                    help=field_help,
                                 )
                                 if raw.strip():
                                     agent_params[param_name] = int(raw)
@@ -572,6 +574,7 @@ for cat_key, cat_agents in _grouped_agents:
                                     step=1,
                                     key=widget_key,
                                     label_visibility="collapsed",
+                                    help=field_help,
                                 )
                                 agent_params[param_name] = val
 
@@ -582,6 +585,7 @@ for cat_key, cat_agents in _grouped_agents:
                                     value=str(default) if default is not None else "",
                                     key=widget_key,
                                     label_visibility="collapsed",
+                                    help=field_help,
                                 )
                                 if raw.strip():
                                     agent_params[param_name] = float(raw)
@@ -594,6 +598,7 @@ for cat_key, cat_agents in _grouped_agents:
                                     format=fmt,
                                     key=widget_key,
                                     label_visibility="collapsed",
+                                    help=field_help,
                                 )
                                 agent_params[param_name] = val
 
@@ -604,6 +609,7 @@ for cat_key, cat_agents in _grouped_agents:
                                 value=str_default,
                                 key=widget_key,
                                 label_visibility="collapsed",
+                                help=field_help,
                             )
                             if val or not nullable:
                                 agent_params[param_name] = val
@@ -640,6 +646,7 @@ for cat_key, cat_agents in _grouped_agents:
                                 value=str_default,
                                 key=widget_key,
                                 label_visibility="collapsed",
+                                help=field_help,
                             )
                             if val or not nullable:
                                 agent_params[param_name] = val

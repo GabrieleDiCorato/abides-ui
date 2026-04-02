@@ -120,13 +120,6 @@ hr { border-color: #1C2128 !important; opacity: 0.5; }
 /* ── Hide Streamlit chrome ────────────────────────────────────────────── */
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
-
-/* ── Metric tooltip hover reveal ──────────────────────────────────────── */
-.metric-tip:hover .metric-tip-text,
-.metric-tip:focus-within .metric-tip-text {
-    visibility: visible !important;
-    opacity: 1 !important;
-}
 """
 
 # ── Plotly theme ──────────────────────────────────────────────────────────────

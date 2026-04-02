@@ -19,7 +19,7 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
     ----------
     description:
         If provided, an **ⓘ** icon is appended to the label.  Hovering over the
-        icon reveals the full description in a CSS-only tooltip (no JS required).
+        icon reveals the full description via the native browser ``title`` tooltip.
     """
     esc = _html.escape
     delta_html = ""
@@ -30,36 +30,16 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
     if subtitle:
         subtitle_html = f'<div style="font-family:\'Inter\',sans-serif;font-size:0.65rem;color:#6B7280;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="{esc(subtitle)}">{esc(subtitle)}</div>'
 
-    # Optional info-icon tooltip
+    # Optional info-icon with native title tooltip
     info_html = ""
     if description:
-        info_html = (
-            ' <span tabindex="0" style="position:relative;display:inline-block;cursor:help;outline:none" class="metric-tip">'
-            '<span style="font-size:0.62rem;color:#6B7280;vertical-align:middle">ⓘ</span>'
-            '<span class="metric-tip-text" style="'
-            "visibility:hidden;opacity:0;"
-            "position:absolute;z-index:1000;"
-            "bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);"
-            "width:260px;max-width:70vw;"
-            "padding:10px 12px;"
-            "background:rgba(17,20,28,0.97);"
-            "border:1px solid rgba(255,255,255,0.12);"
-            "border-radius:6px;"
-            "font-family:'Inter',sans-serif;font-size:0.68rem;font-weight:400;"
-            "color:#C9CDD3;line-height:1.45;"
-            "text-transform:none;letter-spacing:normal;"
-            "white-space:normal;"
-            "box-shadow:0 4px 24px rgba(0,0,0,0.45);"
-            "pointer-events:none;"
-            "transition:opacity 0.15s ease-in-out,visibility 0.15s ease-in-out;"
-            '">'
-            f"{esc(description)}"
-            "</span>"
-            "</span>"
-        )
+        info_html = f' <span title="{esc(description, quote=True)}" style="cursor:help;font-size:0.62rem;color:#6B7280;vertical-align:middle">ⓘ</span>'
+
+    # Card-level title for full-card hover description
+    card_title = f' title="{esc(description, quote=True)}"' if description else ""
 
     return (
-        '<div style="'
+        f'<div{card_title} style="'
         "background:rgba(11,14,20,0.65);"
         "backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);"
         "border:1px solid rgba(255,255,255,0.08);"

@@ -98,12 +98,12 @@ class TestGlassmorphismCardDescription:
     def test_card_without_description(self) -> None:
         html = glassmorphism_card(label="Test", value="42")
         assert "ⓘ" not in html
-        assert "metric-tip" not in html
+        assert 'title=' not in html.split('style=')[0]  # no title on card div
 
     def test_card_with_description(self) -> None:
         html = glassmorphism_card(label="VWAP", value="$100.00", description="Volume-Weighted Average Price")
         assert "ⓘ" in html
-        assert "metric-tip" in html
+        assert 'title="Volume-Weighted Average Price"' in html
         assert _html.escape("Volume-Weighted Average Price") in html
 
     def test_description_is_html_escaped(self) -> None:
@@ -136,6 +136,7 @@ class TestMetricRowAutoEnrich:
         assert _html.escape(custom) in html
 
     def test_style_tag_not_inlined(self) -> None:
-        """Tooltip CSS is now in the global theme, not per metric_row."""
+        """Tooltip uses native title attr, no <style> needed."""
         html = metric_row([{"label": "Volume", "value": "1000"}])
         assert "<style>" not in html
+        assert 'title=' in html
