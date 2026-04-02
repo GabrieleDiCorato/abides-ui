@@ -636,12 +636,12 @@ if validate_clicked:
         try:
             config = build_config()
             validation = validate_config(config.model_dump())
+            for issue in validation.warnings:
+                msg = issue.message
+                if issue.suggestion:
+                    msg += f" — {issue.suggestion}"
+                st.warning(msg)
             if validation.valid:
-                for issue in validation.warnings:
-                    msg = issue.message
-                    if issue.suggestion:
-                        msg += f" — {issue.suggestion}"
-                    st.warning(msg)
                 st.success("✅ Configuration is valid!")
             else:
                 for issue in validation.errors:
@@ -649,11 +649,6 @@ if validate_clicked:
                     if issue.suggestion:
                         msg += f"\n\n**Suggestion:** {issue.suggestion}"
                     st.error(msg)
-                for issue in validation.warnings:
-                    msg = issue.message
-                    if issue.suggestion:
-                        msg += f" — {issue.suggestion}"
-                    st.warning(msg)
         except Exception as exc:
             st.error(f"Configuration error: {exc}")
 
