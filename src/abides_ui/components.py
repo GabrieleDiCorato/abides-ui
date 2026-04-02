@@ -34,7 +34,7 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
     info_html = ""
     if description:
         info_html = (
-            ' <span style="position:relative;display:inline-block;cursor:help" class="metric-tip">'
+            ' <span tabindex="0" style="position:relative;display:inline-block;cursor:help;outline:none" class="metric-tip">'
             '<span style="font-size:0.62rem;color:#6B7280;vertical-align:middle">ⓘ</span>'
             '<span class="metric-tip-text" style="'
             "visibility:hidden;opacity:0;"
@@ -95,7 +95,7 @@ def metric_row(cards: list[dict[str, Any]]) -> str:
     inner = "".join(glassmorphism_card(**c) for c in enriched)
     # The <style> block enables the CSS-only tooltip hover reveal.
     return (
-        "<style>.metric-tip:hover .metric-tip-text{visibility:visible!important;opacity:1!important}</style>"
+        "<style>.metric-tip:hover .metric-tip-text,.metric-tip:focus-within .metric-tip-text{visibility:visible!important;opacity:1!important}</style>"
         f'<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:12px;">{inner}</div>'
     )
 
