@@ -13,6 +13,7 @@ from abides_markets.config_system import (
     AgentGroupConfig,
     ExchangeConfig,
     MarketConfig,
+    MeanRevertingOracleConfig,
     SimulationConfig,
     SimulationMeta,
     SparseMeanRevertingOracleConfig,
@@ -30,14 +31,18 @@ from abides_ui.theme import CARBON_DARK_CSS
 
 # ── Page config & theme injection ─────────────────────────────────────────────
 
-st.set_page_config(page_title="ABIDES Terminal", layout="wide")
+st.set_page_config(page_title="ABIDES Terminal", page_icon="⬡", layout="wide")
 st.markdown(f"<style>{CARBON_DARK_CSS}</style>", unsafe_allow_html=True)
 
 _hasufel_version = _pkg_version("abides-hasufel")
 st.markdown(
-    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">'
-    "<span style=\"font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:700;color:#E0E0E0;letter-spacing:0.08em\">ABIDES TERMINAL</span>"
+    '<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">'
+    '<span style="font-size:1.6rem;opacity:0.25;line-height:1">⬡</span>'
+    "<span style=\"font-family:'JetBrains Mono',monospace;font-size:1.3rem;font-weight:700;color:#E0E0E0;letter-spacing:0.08em\">ABIDES TERMINAL</span>"
     f"<span style=\"font-family:'JetBrains Mono',monospace;font-size:0.6rem;background:rgba(0,112,255,0.15);color:#0070FF;padding:2px 8px;border-radius:4px;border:1px solid rgba(0,112,255,0.25)\">v{_hasufel_version}</span>"
+    "</div>"
+    "<div style=\"font-family:'Inter',sans-serif;font-size:0.78rem;color:#6B7280;margin-bottom:12px\">"
+    "Agent-Based Interactive Discrete Event Simulation"
     "</div>",
     unsafe_allow_html=True,
 )
@@ -223,6 +228,12 @@ with st.sidebar:
         help="Enable to include per-agent order logs (slower). Needed for Order Flow tab.",
     )
 
+    include_l2_depth = st.toggle(
+        "Include L2 depth snapshots",
+        value=False,
+        help="Enable to capture full order book depth at each tick. Needed for depth heatmap.",
+    )
+
     st.divider()
 
     # ── Oracle settings ───────────────────────────────────────────────────────
@@ -235,12 +246,16 @@ with st.sidebar:
         key = opt.get("type")
         if key == "sparse_mean_reverting":
             oracle_type_labels["sparse_mean_reverting"] = "Sparse Mean-Reverting"
+        elif key == "mean_reverting":
+            oracle_type_labels["mean_reverting"] = "Mean-Reverting (deprecated)"
+        elif key == "external_data":
+            oracle_type_labels["external_data"] = "External Data Oracle"
         elif key is None:
             oracle_type_labels["none"] = "No Oracle (LOB-only)"
 
     oracle_choices = list(oracle_type_labels.keys())
 
-    tpl_oracle_type = "sparse_mean_reverting"
+    tpl_oracle_type = tpl_oracle.get("type", "sparse_mean_reverting") if tpl_oracle else "sparse_mean_reverting"
     if tpl_oracle == {} and tpl_market.get("oracle") is None and tpl_market.get("opening_price") is not None:
         tpl_oracle_type = "none"
 
@@ -263,6 +278,33 @@ with st.sidebar:
             step=10.0,
             format="%.2f",
             help="Seed price for the exchange when no oracle is used. Required in oracle-absent mode.",
+        )
+    elif oracle_selection == "external_data":
+        st.info("External data oracle will be injected at runtime via `SimulationBuilder.oracle_instance()`.")
+    elif oracle_selection == "mean_reverting":
+        st.warning("⚠️ Deprecated — prefer Sparse Mean-Reverting for new work. Steps once per nanosecond; prohibitively expensive for long simulations.")
+        r_bar_cents_default_mr = tpl_oracle.get("r_bar", 100_000)
+        mr_r_bar_dollars = st.number_input(
+            "Mean fundamental price ($)",
+            min_value=0.01,
+            value=r_bar_cents_default_mr / 100,
+            step=10.0,
+            format="%.2f",
+            key="_mr_r_bar",
+        )
+        mr_kappa = st.number_input(
+            "Kappa (per-nanosecond reversion)",
+            min_value=0.0,
+            value=float(tpl_oracle.get("kappa", 0.05)),
+            format="%.4e",
+            key="_mr_kappa",
+        )
+        mr_sigma_s = st.number_input(
+            "Sigma_s (per-step shock variance)",
+            min_value=0.0,
+            value=float(tpl_oracle.get("sigma_s", 100_000)),
+            format="%.2f",
+            key="_mr_sigma_s",
         )
     else:
         r_bar_cents_default = tpl_oracle.get("r_bar", 100_000)
@@ -306,7 +348,48 @@ with st.sidebar:
             )
 
     st.divider()
-    st.caption(f"[abides-hasufel v{_hasufel_version}](https://github.com/GabrieleDiCorato/abides-hasufel)")
+
+    # ── Session status indicator ────────────────────────────────────────────
+    _has_result = st.session_state.get("result") is not None
+    _result_ticker = st.session_state.get("ticker", "")
+    if _has_result:
+        st.markdown(
+            f"<div style=\"font-family:'JetBrains Mono',monospace;font-size:0.68rem;"
+            f"background:rgba(0,200,5,0.08);color:#00C805;padding:6px 10px;"
+            f'border-radius:4px;border:1px solid rgba(0,200,5,0.2);margin-bottom:8px">'
+            f"● Results loaded — {_html.escape(_result_ticker)}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style=\"font-family:'JetBrains Mono',monospace;font-size:0.68rem;"
+            "color:#6B7280;padding:6px 10px;border-radius:4px;"
+            'border:1px solid rgba(255,255,255,0.06);margin-bottom:8px">'
+            "○ No results yet</div>",
+            unsafe_allow_html=True,
+        )
+
+    # ── Reset All button ──────────────────────────────────────────────────
+    if st.button("🔄 Reset All", use_container_width=True, key="_reset_all_btn"):
+        for k in list(st.session_state):
+            del st.session_state[k]
+        st.rerun()
+
+    # ── About ─────────────────────────────────────────────────────────────
+    with st.expander("ℹ️ About", expanded=False):
+        st.markdown(
+            f"**ABIDES Terminal** — interactive market simulation dashboard.\n\n"
+            f"Powered by [abides-hasufel v{_hasufel_version}]"
+            f"(https://github.com/GabrieleDiCorato/abides-hasufel), "
+            f"an agent-based discrete-event simulation engine for "
+            f"financial markets.\n\n"
+            f"**Quick start:** pick a template in the sidebar, "
+            f"customize agent parameters, then hit **Run Simulation**.\n\n"
+            f"**Tips**\n"
+            f"- Press **R** to re-run the app at any time\n"
+            f"- Use the *Quick* preset for fast experiments\n"
+            f"- Enable *Include raw agent logs* for the Order Book tab",
+        )
 
 # ── Main area: agent boxes ───────────────────────────────────────────────────
 
@@ -583,6 +666,16 @@ def build_config() -> SimulationConfig:
     if oracle_selection == "none":
         oracle_cfg = None
         opening_price_cents = int(opening_price_dollars * 100)
+    elif oracle_selection == "mean_reverting":
+        oracle_cfg = MeanRevertingOracleConfig(
+            r_bar=int(mr_r_bar_dollars * 100),
+            kappa=mr_kappa,
+            sigma_s=mr_sigma_s,
+        )
+        opening_price_cents = None
+    elif oracle_selection == "external_data":
+        oracle_cfg = None
+        opening_price_cents = None
     else:
         oracle_cfg = SparseMeanRevertingOracleConfig(
             r_bar=int(r_bar_dollars * 100),
@@ -653,6 +746,7 @@ if validate_clicked:
             st.error(f"Configuration error: {exc}")
 
 run_clicked = st.button("🚀 Run Simulation", type="primary", width="stretch")
+st.caption("💡 Tip: press **R** to re-run the app at any time.")
 
 if run_clicked:
     if not agent_configs:
@@ -689,6 +783,8 @@ if run_clicked:
         )
         t0 = time.perf_counter()
         _profile = ResultProfile.FULL if include_raw_logs else ResultProfile.QUANT
+        if not include_l2_depth:
+            _profile = _profile & ~ResultProfile.L2_SERIES
         result: SimulationResult = run_simulation(config, profile=_profile)
         wall_time = time.perf_counter() - t0
         _status.update(label=f"Simulation complete — {wall_time:.2f}s", state="complete", expanded=False)
@@ -718,8 +814,22 @@ result: SimulationResult | None = st.session_state.get("result")
 if result is None:
     st.markdown(
         "<div style=\"text-align:center;padding:60px 20px;color:#6B7280;font-family:'Inter',sans-serif\">"
-        '<div style="font-size:2rem;margin-bottom:8px;opacity:0.3">⬡</div>'
-        '<div style="font-size:0.85rem">Configure agents in the Preparation Desk and execute a simulation.</div>'
+        '<div style="font-size:2.5rem;margin-bottom:12px;opacity:0.2">⬡</div>'
+        '<div style="font-size:1rem;color:#A0A8B4;margin-bottom:20px">No simulation results yet</div>'
+        '<div style="display:flex;justify-content:center;gap:32px;flex-wrap:wrap;margin-top:8px">'
+        '<div style="text-align:center;max-width:160px">'
+        '<div style="font-size:1.3rem;margin-bottom:4px">1</div>'
+        '<div style="font-size:0.78rem">Pick a <b>template</b> in the Preparation Desk</div>'
+        "</div>"
+        '<div style="text-align:center;max-width:160px">'
+        '<div style="font-size:1.3rem;margin-bottom:4px">2</div>'
+        '<div style="font-size:0.78rem">Customize <b>agents</b> and parameters</div>'
+        "</div>"
+        '<div style="text-align:center;max-width:160px">'
+        '<div style="font-size:1.3rem;margin-bottom:4px">3</div>'
+        '<div style="font-size:0.78rem">Hit <b style="color:#0070FF">Run Simulation</b></div>'
+        "</div>"
+        "</div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -767,8 +877,12 @@ if summary_warnings:
 
 config_json: str | None = st.session_state.get("config_json")
 
-tab_micro, tab_alpha, tab_book, tab_config = st.tabs(
-    ["Market Microstructure", "Agent Alpha", "Order Book Dynamics", "Configuration"]
+tab_micro, tab_alpha, tab_book, tab_config = st.tabs(["Market Microstructure", "Agent Alpha", "Order Book Dynamics", "Configuration"])
+st.caption(
+    "**Microstructure** — prices, spreads, volatility &nbsp;·&nbsp; "
+    "**Alpha** — agent P&L, equity curves &nbsp;·&nbsp; "
+    "**Order Book** — flow stats, trade attribution &nbsp;·&nbsp; "
+    "**Config** — JSON export"
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -778,7 +892,7 @@ tab_micro, tab_alpha, tab_book, tab_config = st.tabs(
 with tab_micro:
     if l1 is not None:
         # ── Price series (full width) ─────────────────────────────────────
-        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), width='stretch')
+        st.plotly_chart(charts.price_series(l1.time, l1.bid, l1.ask, l1.mid), width="stretch")
 
         # ── Spread + Rolling volatility (side by side) ────────────────────
         _mean = l1.spread.mean()
@@ -787,12 +901,12 @@ with tab_micro:
 
         mc1, mc2 = st.columns(2)
         with mc1:
-            st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), width='stretch')
+            st.plotly_chart(charts.spread_over_time(l1.time, l1.spread, avg_spread), width="stretch")
         with mc2:
             if rv is not None:
                 rolling_vol_series, window = rv
                 ret_time = l1.time.iloc[l1.log_returns.index]
-                st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), width='stretch')
+                st.plotly_chart(charts.rolling_volatility(ret_time, rolling_vol_series, window), width="stretch")
 
         # ── Book pressure + Returns histogram (side by side) ──────────────
         pressure = metrics.compute_book_pressure(l1.l1_df)
@@ -800,10 +914,10 @@ with tab_micro:
 
         mc3, mc4 = st.columns(2)
         with mc3:
-            st.plotly_chart(charts.book_pressure(l1.time, pressure), width='stretch')
+            st.plotly_chart(charts.book_pressure(l1.time, pressure), width="stretch")
         with mc4:
             if rs is not None:
-                st.plotly_chart(charts.returns_histogram(l1.log_returns), width='stretch')
+                st.plotly_chart(charts.returns_histogram(l1.log_returns), width="stretch")
 
         # ── Spread statistics cards ───────────────────────────────────────
         ss = metrics.compute_spread_stats(l1.spread, l1.mid)
@@ -883,7 +997,7 @@ with tab_micro:
                 st.markdown(metric_row(_micro_cards), unsafe_allow_html=True)
 
         with st.expander("Raw L1 data"):
-            st.dataframe(l1.l1_df, width='stretch')
+            st.dataframe(l1.l1_df, width="stretch")
     else:
         st.warning("L1 price series not available.")
 
@@ -927,28 +1041,28 @@ with tab_alpha:
 
         # ── Performance table ─────────────────────────────────────────────
         agg = metrics.compute_agent_performance(agent_df)
-        st.dataframe(agg, width='stretch', hide_index=True)
+        st.dataframe(agg, width="stretch", hide_index=True)
 
         # ── P&L box plot + equity curves (side by side) ───────────────────
         if exec_agents:
             aa1, aa2 = st.columns(2)
             with aa1:
-                st.plotly_chart(charts.pnl_box_plot(agent_df), width='stretch')
+                st.plotly_chart(charts.pnl_box_plot(agent_df), width="stretch")
             with aa2:
                 # Show equity curve for the first execution agent
                 for agent in exec_agents[:1]:
                     ec_df = metrics.build_equity_curve_df(agent)
                     if ec_df is not None:
-                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width='stretch')
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width="stretch")
                     else:
                         st.caption("No equity curve data.")
         else:
-            st.plotly_chart(charts.pnl_box_plot(agent_df), width='stretch')
+            st.plotly_chart(charts.pnl_box_plot(agent_df), width="stretch")
 
         # ── Holdings breakdown ────────────────────────────────────────────
         hold_agg = metrics.build_holdings_table(result)
         if hold_agg is not None:
-            st.dataframe(hold_agg, width='stretch', hide_index=True)
+            st.dataframe(hold_agg, width="stretch", hide_index=True)
 
         # ── Slippage comparison ───────────────────────────────────────────
         if len(exec_agents) > 1:
@@ -959,7 +1073,7 @@ with tab_alpha:
                 }
                 for a in exec_agents
             ]
-            st.plotly_chart(charts.slippage_comparison(slip_data), width='stretch')
+            st.plotly_chart(charts.slippage_comparison(slip_data), width="stretch")
 
         # ── Per-agent execution details ───────────────────────────────────
         if exec_agents:
@@ -968,14 +1082,14 @@ with tab_alpha:
                     detail_df = metrics.build_execution_detail_df(agent)
                     if len(detail_df) > 0:
                         st.caption(f"**{agent.agent_name}** ({agent.agent_type})")
-                        st.dataframe(detail_df, width='stretch', hide_index=True)
+                        st.dataframe(detail_df, width="stretch", hide_index=True)
                     ec_df = metrics.build_equity_curve_df(agent)
                     if ec_df is not None:
-                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width='stretch')
+                        st.plotly_chart(charts.equity_curve(ec_df, agent.agent_name), width="stretch")
 
         # ── Leaderboard ───────────────────────────────────────────────────
         with st.expander("Agent Leaderboard"):
-            st.dataframe(metrics.build_leaderboard(agent_df), width='stretch')
+            st.dataframe(metrics.build_leaderboard(agent_df), width="stretch")
     else:
         st.info("No agent data available.")
 
@@ -1008,28 +1122,28 @@ with tab_book:
             event_counts = order_df["EventType"].value_counts()
             ob1, ob2 = st.columns(2)
             with ob1:
-                st.plotly_chart(charts.event_type_pie(event_counts), width='stretch')
+                st.plotly_chart(charts.event_type_pie(event_counts), width="stretch")
             with ob2:
                 if "side" in order_df.columns:
                     submitted = order_df[order_df["EventType"] == "ORDER_SUBMITTED"]
                     side_counts = submitted["side"].value_counts()
-                    st.plotly_chart(charts.side_balance(side_counts), width='stretch')
+                    st.plotly_chart(charts.side_balance(side_counts), width="stretch")
 
         # ── Cumulative imbalance (full width) ─────────────────────────────
         imb_df = metrics.compute_cumulative_imbalance(order_df)
         if imb_df is not None:
             flow_time = pd.to_datetime(imb_df["EventTime"], unit="ns")
-            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), width='stretch')
+            st.plotly_chart(charts.cumulative_imbalance(flow_time, imb_df["cum_imbalance"]), width="stretch")
 
         # ── Volume by agent type ──────────────────────────────────────────
         if "agent_type" in order_df.columns:
             exec_df = order_df[order_df["EventType"] == "ORDER_EXECUTED"]
             if len(exec_df) > 0 and "quantity" in exec_df.columns:
                 vol_by_type = exec_df.groupby("agent_type")["quantity"].sum().sort_values(ascending=True)
-                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), width='stretch')
+                st.plotly_chart(charts.volume_by_agent_type(vol_by_type), width="stretch")
 
         with st.expander("Raw order logs"):
-            st.dataframe(order_df, width='stretch')
+            st.dataframe(order_df, width="stretch")
 
     # ── Trade attribution section ─────────────────────────────────────────
     if _has_trades:
@@ -1052,15 +1166,59 @@ with tab_book:
         # ── Maker/taker volume + Trade price scatter (side by side) ───────
         ob3, ob4 = st.columns(2)
         with ob3:
-            st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), width='stretch')
+            st.plotly_chart(charts.maker_taker_volume(mts.maker_volume_by_type, mts.taker_volume_by_type), width="stretch")
         with ob4:
-            st.plotly_chart(charts.trade_price_scatter(attr_df), width='stretch')
+            st.plotly_chart(charts.trade_price_scatter(attr_df), width="stretch")
 
         with st.expander("Raw trade attribution data"):
-            st.dataframe(attr_df, width='stretch')
+            st.dataframe(attr_df, width="stretch")
 
     if not _has_orders and not _has_trades:
         st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
+
+    # ── L2 Order Book Depth ───────────────────────────────────────────────
+    if market.l2_series is not None:
+        st.markdown(
+            "<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:12px 0 4px 0;text-transform:uppercase;letter-spacing:0.06em\">L2 Order Book Depth</div>",
+            unsafe_allow_html=True,
+        )
+        l2_df = market.l2_series.as_dataframe()
+        if len(l2_df) > 0:
+            _l2_mid = l1.mid if l1 is not None else None
+            st.plotly_chart(charts.l2_depth_heatmap(l2_df, mid=_l2_mid), width="stretch")
+
+            _l2_c1, _l2_c2 = st.columns(2)
+            with _l2_c1:
+                st.plotly_chart(charts.l2_depth_profile(l2_df), width="stretch")
+            with _l2_c2:
+                # L2 depth summary cards
+                _bid_levels = l2_df[l2_df["side"] == "bid"]
+                _ask_levels = l2_df[l2_df["side"] == "ask"]
+                _n_snapshots = l2_df["time_ns"].nunique()
+                _max_depth = int(l2_df["level"].max()) + 1 if len(l2_df) > 0 else 0
+                _avg_bid_depth = float(_bid_levels["qty"].mean()) if len(_bid_levels) > 0 else 0
+                _avg_ask_depth = float(_ask_levels["qty"].mean()) if len(_ask_levels) > 0 else 0
+                st.markdown(
+                    metric_row(
+                        [
+                            {"label": "L2 Snapshots", "value": f"{_n_snapshots:,}"},
+                            {"label": "Max Depth", "value": f"{_max_depth} levels"},
+                            {"label": "Avg Bid Qty/Level", "value": f"{_avg_bid_depth:,.0f}"},
+                            {"label": "Avg Ask Qty/Level", "value": f"{_avg_ask_depth:,.0f}"},
+                        ]
+                    ),
+                    unsafe_allow_html=True,
+                )
+
+            with st.expander("Raw L2 data"):
+                st.dataframe(l2_df, width="stretch")
+        else:
+            st.info("L2 data is empty.")
+    else:
+        if not _has_orders and not _has_trades:
+            pass  # already warned above
+        elif not include_l2_depth:
+            st.caption("💡 Enable **Include L2 depth snapshots** in the sidebar for order book depth heatmap.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: CONFIGURATION
