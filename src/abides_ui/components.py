@@ -12,8 +12,15 @@ from typing import Any
 # ── Glassmorphism metric card ─────────────────────────────────────────────────
 
 
-def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = "", delta_color: str = "") -> str:
-    """Single KPI card with backdrop blur and glass border."""
+def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = "", delta_color: str = "", description: str = "") -> str:
+    """Single KPI card with backdrop blur and glass border.
+
+    Parameters
+    ----------
+    description:
+        If provided, an **ⓘ** icon is appended to the label.  Hovering over the
+        icon reveals the full description in a CSS-only tooltip (no JS required).
+    """
     esc = _html.escape
     delta_html = ""
     if delta:
@@ -22,6 +29,34 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
     subtitle_html = ""
     if subtitle:
         subtitle_html = f'<div style="font-family:\'Inter\',sans-serif;font-size:0.65rem;color:#6B7280;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="{esc(subtitle)}">{esc(subtitle)}</div>'
+
+    # Optional info-icon tooltip
+    info_html = ""
+    if description:
+        info_html = (
+            ' <span style="position:relative;display:inline-block;cursor:help" class="metric-tip">'
+            '<span style="font-size:0.62rem;color:#6B7280;vertical-align:middle">ⓘ</span>'
+            '<span class="metric-tip-text" style="'
+            "visibility:hidden;opacity:0;"
+            "position:absolute;z-index:1000;"
+            "bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);"
+            "width:260px;max-width:70vw;"
+            "padding:10px 12px;"
+            "background:rgba(17,20,28,0.97);"
+            "border:1px solid rgba(255,255,255,0.12);"
+            "border-radius:6px;"
+            "font-family:'Inter',sans-serif;font-size:0.68rem;font-weight:400;"
+            "color:#C9CDD3;line-height:1.45;"
+            "text-transform:none;letter-spacing:normal;"
+            "white-space:normal;"
+            "box-shadow:0 4px 24px rgba(0,0,0,0.45);"
+            "pointer-events:none;"
+            "transition:opacity 0.15s ease-in-out,visibility 0.15s ease-in-out;"
+            '">'
+            f"{esc(description)}"
+            "</span>"
+            "</span>"
+        )
 
     return (
         '<div style="'
@@ -33,7 +68,7 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
         "min-width:0;"
         "overflow:hidden;"
         '">'
-        f"<div style=\"font-family:'Inter',sans-serif;font-size:0.68rem;font-weight:500;color:#8A919B;text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">{esc(label)}</div>"
+        f"<div style=\"font-family:'Inter',sans-serif;font-size:0.68rem;font-weight:500;color:#8A919B;text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">{esc(label)}{info_html}</div>"
         f"<div style=\"font-family:'JetBrains Mono',monospace;font-size:1.35rem;font-weight:700;color:#E0E0E0;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">{esc(value)}</div>"
         f"{delta_html}"
         f"{subtitle_html}"
@@ -45,9 +80,24 @@ def metric_row(cards: list[dict[str, Any]]) -> str:
     """Wrap N glassmorphism cards in a responsive CSS-grid row.
 
     Each entry in *cards* is a dict of kwargs for :func:`glassmorphism_card`.
+    If a card dict has no ``description`` key, the matching entry from
+    :data:`~abides_ui.descriptions.METRIC_DESCRIPTIONS` is injected
+    automatically so callers don't need to pass descriptions manually.
     """
-    inner = "".join(glassmorphism_card(**c) for c in cards)
-    return f'<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:12px;">{inner}</div>'
+    from abides_ui.descriptions import get_description
+
+    enriched: list[dict[str, Any]] = []
+    for c in cards:
+        if "description" not in c:
+            c = {**c, "description": get_description(c.get("label", ""))}
+        enriched.append(c)
+
+    inner = "".join(glassmorphism_card(**c) for c in enriched)
+    # The <style> block enables the CSS-only tooltip hover reveal.
+    return (
+        "<style>.metric-tip:hover .metric-tip-text{visibility:visible!important;opacity:1!important}</style>"
+        f'<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:12px;">{inner}</div>'
+    )
 
 
 # ── Agent composition "Market Recipe" bar ─────────────────────────────────────
