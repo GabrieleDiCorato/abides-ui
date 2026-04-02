@@ -93,11 +93,7 @@ def metric_row(cards: list[dict[str, Any]]) -> str:
         enriched.append(c)
 
     inner = "".join(glassmorphism_card(**c) for c in enriched)
-    # The <style> block enables the CSS-only tooltip hover reveal.
-    return (
-        "<style>.metric-tip:hover .metric-tip-text,.metric-tip:focus-within .metric-tip-text{visibility:visible!important;opacity:1!important}</style>"
-        f'<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:12px;">{inner}</div>'
-    )
+    return f'<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:12px;">{inner}</div>'
 
 
 # ── Agent composition "Market Recipe" bar ─────────────────────────────────────

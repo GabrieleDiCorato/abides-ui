@@ -135,7 +135,7 @@ class TestMetricRowAutoEnrich:
         html = metric_row([{"label": "VWAP", "value": "$100", "description": custom}])
         assert _html.escape(custom) in html
 
-    def test_style_tag_present(self) -> None:
+    def test_style_tag_not_inlined(self) -> None:
+        """Tooltip CSS is now in the global theme, not per metric_row."""
         html = metric_row([{"label": "Volume", "value": "1000"}])
-        assert "<style>" in html
-        assert "metric-tip:hover" in html
+        assert "<style>" not in html
