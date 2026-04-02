@@ -6,6 +6,7 @@ returns a ``plotly.graph_objects.Figure``.  No Streamlit imports here.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
@@ -303,5 +304,113 @@ def trade_price_scatter(attr_df: pd.DataFrame) -> go.Figure:
         xaxis_title="Time",
         yaxis_title="Price ($)",
         height=HEIGHT_PRIMARY,
+    )
+    return apply_fin_theme(fig)
+
+
+# ── L2 Order Book Depth (v2.5.5) ─────────────────────────────────────────────
+
+
+def l2_depth_heatmap(l2_df: pd.DataFrame, mid: pd.Series | None = None) -> go.Figure:
+    """Heatmap of order book depth over time.
+
+    Expects a tidy L2 DataFrame with columns:
+    time_ns, side, level, price_cents, qty.
+    """
+    bids = l2_df[l2_df["side"] == "bid"].copy()
+    asks = l2_df[l2_df["side"] == "ask"].copy()
+
+    for df in (bids, asks):
+        df["time"] = pd.to_datetime(df["time_ns"], unit="ns")
+        df["price ($)"] = df["price_cents"] / 100
+
+    # Pivot into time × price grid
+    bid_pivot = bids.pivot_table(index="price ($)", columns="time", values="qty", aggfunc="sum", fill_value=0)
+    ask_pivot = asks.pivot_table(index="price ($)", columns="time", values="qty", aggfunc="sum", fill_value=0)
+
+    fig = go.Figure()
+
+    if len(bid_pivot) > 0:
+        fig.add_trace(
+            go.Heatmap(
+                x=bid_pivot.columns,
+                y=bid_pivot.index,
+                z=bid_pivot.values,
+                colorscale=[[0, "rgba(0,0,0,0)"], [1, PALETTE["market"]]],
+                name="Bids",
+                showscale=False,
+                hovertemplate="Time: %{x}<br>Price: $%{y:.2f}<br>Qty: %{z}<extra>Bid</extra>",
+            )
+        )
+
+    if len(ask_pivot) > 0:
+        fig.add_trace(
+            go.Heatmap(
+                x=ask_pivot.columns,
+                y=ask_pivot.index,
+                z=ask_pivot.values,
+                colorscale=[[0, "rgba(0,0,0,0)"], [1, PALETTE["hft"]]],
+                name="Asks",
+                showscale=False,
+                hovertemplate="Time: %{x}<br>Price: $%{y:.2f}<br>Qty: %{z}<extra>Ask</extra>",
+            )
+        )
+
+    if mid is not None and len(mid.dropna()) > 0:
+        mid_time = pd.to_datetime(np.sort(l2_df["time_ns"].unique()), unit="ns")
+        # Resample mid to match L2 timestamps
+        mid_resampled = mid.iloc[: len(mid_time)] if len(mid) >= len(mid_time) else mid
+        fig.add_trace(
+            go.Scatter(
+                x=mid_time[: len(mid_resampled)],
+                y=mid_resampled.values,
+                mode="lines",
+                name="Mid Price",
+                line={"color": PALETTE["institutional"], "width": 2},
+            )
+        )
+
+    fig.update_layout(
+        title="Order Book Depth Heatmap (L2)",
+        xaxis_title="Time",
+        yaxis_title="Price ($)",
+        height=HEIGHT_PRIMARY + 80,
+    )
+    return apply_fin_theme(fig)
+
+
+def l2_depth_profile(l2_df: pd.DataFrame) -> go.Figure:
+    """Snapshot depth profile — average quantity at each price level."""
+    bids = l2_df[l2_df["side"] == "bid"]
+    asks = l2_df[l2_df["side"] == "ask"]
+
+    bid_levels = bids.groupby("level")["qty"].mean().sort_index()
+    ask_levels = asks.groupby("level")["qty"].mean().sort_index()
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=[-v for v in bid_levels.values],
+            y=[f"Bid L{i}" for i in bid_levels.index],
+            orientation="h",
+            name="Bid Depth",
+            marker_color=PALETTE["market"],
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=ask_levels.values.tolist(),
+            y=[f"Ask L{i}" for i in ask_levels.index],
+            orientation="h",
+            name="Ask Depth",
+            marker_color=PALETTE["hft"],
+        )
+    )
+    fig.update_layout(
+        title="Average Depth Profile by Level",
+        xaxis_title="Avg Quantity (negative = bids)",
+        yaxis_title="Book Level",
+        height=HEIGHT_SECONDARY,
+        barmode="relative",
     )
     return apply_fin_theme(fig)
