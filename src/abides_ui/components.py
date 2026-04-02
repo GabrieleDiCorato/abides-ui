@@ -66,7 +66,7 @@ def glassmorphism_card(label: str, value: str, subtitle: str = "", delta: str = 
         "border-radius:8px;"
         "padding:12px 16px;"
         "min-width:0;"
-        "overflow:hidden;"
+        "position:relative;"
         '">'
         f"<div style=\"font-family:'Inter',sans-serif;font-size:0.68rem;font-weight:500;color:#8A919B;text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">{esc(label)}{info_html}</div>"
         f"<div style=\"font-family:'JetBrains Mono',monospace;font-size:1.35rem;font-weight:700;color:#E0E0E0;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\">{esc(value)}</div>"
