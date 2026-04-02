@@ -578,9 +578,6 @@ if agent_configs:
 
 # ── Run button ────────────────────────────────────────────────────────────────
 
-st.divider()
-run_clicked = st.button("🚀 Run Simulation", type="primary", width="stretch")
-
 
 def build_config() -> SimulationConfig:
     if oracle_selection == "none":
@@ -611,6 +608,56 @@ def build_config() -> SimulationConfig:
         simulation=SimulationMeta(seed=seed),
     )
 
+
+st.divider()
+
+# ── Validate & Download buttons ───────────────────────────────────────────────
+_btn_left, _btn_right = st.columns(2)
+with _btn_left:
+    validate_clicked = st.button("✅ Validate Scenario", use_container_width=True)
+with _btn_right:
+    try:
+        _dl_config = build_config()
+        _dl_json = _dl_config.model_dump_json(indent=2)
+        st.download_button(
+            "📥 Download JSON Config",
+            data=_dl_json,
+            file_name="abides_config.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+    except Exception:
+        st.button("📥 Download JSON Config", disabled=True, use_container_width=True)
+
+if validate_clicked:
+    if not agent_configs:
+        st.error("Enable at least one agent type before validating.")
+    else:
+        try:
+            config = build_config()
+            validation = validate_config(config.model_dump())
+            if validation.valid:
+                for issue in validation.warnings:
+                    msg = issue.message
+                    if issue.suggestion:
+                        msg += f" — {issue.suggestion}"
+                    st.warning(msg)
+                st.success("✅ Configuration is valid!")
+            else:
+                for issue in validation.errors:
+                    msg = issue.message
+                    if issue.suggestion:
+                        msg += f"\n\n**Suggestion:** {issue.suggestion}"
+                    st.error(msg)
+                for issue in validation.warnings:
+                    msg = issue.message
+                    if issue.suggestion:
+                        msg += f" — {issue.suggestion}"
+                    st.warning(msg)
+        except Exception as exc:
+            st.error(f"Configuration error: {exc}")
+
+run_clicked = st.button("🚀 Run Simulation", type="primary", width="stretch")
 
 if run_clicked:
     if not agent_configs:
