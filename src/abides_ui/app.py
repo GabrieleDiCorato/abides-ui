@@ -814,6 +814,11 @@ if run_clicked:
     st.session_state["ticker"] = ticker
     st.session_state["config_json"] = config.model_dump_json(indent=2)
 
+    # Compute rich metrics (v2.5.7)
+    _include_fills = include_raw_logs  # fill-level analysis needs AGENT_LOGS
+    rich = metrics.compute_rich(result, include_fills=_include_fills)
+    st.session_state["rich_metrics"] = rich
+
 # ── Display results ───────────────────────────────────────────────────────────
 
 result: SimulationResult | None = st.session_state.get("result")
@@ -996,6 +1001,12 @@ with tab_micro:
             if micro.resilience_ns is not None:
                 _resil_ms = micro.resilience_ns / 1e6
                 _micro_cards.append({"label": "Resilience (ms)", "value": f"{_resil_ms:,.1f}"})
+            if micro.effective_spread_cents is not None:
+                _micro_cards.append({"label": "Effective Spread (¢)", "value": f"{micro.effective_spread_cents:.2f}"})
+            if micro.market_ott_ratio is not None:
+                _micro_cards.append({"label": "Market OTT", "value": f"{micro.market_ott_ratio:.2f}"})
+            if micro.pct_time_two_sided is not None:
+                _micro_cards.append({"label": "% Two-Sided", "value": f"{micro.pct_time_two_sided:.1f}%"})
             if _micro_cards:
                 st.markdown(
                     "<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:12px 0 4px 0;text-transform:uppercase;letter-spacing:0.06em\">Advanced Microstructure</div>",
@@ -1049,6 +1060,41 @@ with tab_alpha:
         # ── Performance table ─────────────────────────────────────────────
         agg = metrics.compute_agent_performance(agent_df)
         st.dataframe(agg, width="stretch", hide_index=True)
+
+        # ── Rich agent metrics (v2.5.7) ──────────────────────────────────
+        rich: metrics.RichSimulationMetrics | None = st.session_state.get("rich_metrics")
+        if rich is not None:
+            rs = metrics.compute_rich_summary(rich)
+            _rich_cards: list[dict[str, str]] = []
+            if rs.avg_sharpe is not None:
+                _rich_cards.append({"label": "Avg Sharpe", "value": f"{rs.avg_sharpe:.4f}"})
+            if rs.avg_ott_ratio is not None:
+                _rich_cards.append({"label": "Avg OTT Ratio", "value": f"{rs.avg_ott_ratio:.2f}"})
+            if rs.avg_inventory_std is not None:
+                _rich_cards.append({"label": "Avg Inventory σ", "value": f"{rs.avg_inventory_std:.2f}"})
+            _rich_cards.append({"label": "Total Trades (Rich)", "value": f"{rs.total_trade_count:,}"})
+            if rs.avg_fill_slippage_bps is not None:
+                _rich_cards.append({"label": "Avg Fill Slippage", "value": f"{rs.avg_fill_slippage_bps:.1f} bps"})
+            if _rich_cards:
+                st.markdown(
+                    "<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:12px 0 4px 0;text-transform:uppercase;letter-spacing:0.06em\">Rich Agent Analytics (v2.5.7)</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(metric_row(_rich_cards), unsafe_allow_html=True)
+
+            rich_df = metrics.build_rich_agent_dataframe(rich)
+            if not rich_df.empty:
+                _ra1, _ra2 = st.columns(2)
+                with _ra1:
+                    st.plotly_chart(charts.rich_agent_comparison(rich_df), width="stretch")
+                with _ra2:
+                    # Fill slippage distribution
+                    if rich.fills:
+                        fill_df = metrics.build_fill_records_df(rich.fills)
+                        st.plotly_chart(charts.fill_slippage_histogram(fill_df), width="stretch")
+
+                with st.expander("Rich agent detail table"):
+                    st.dataframe(rich_df, width="stretch", hide_index=True)
 
         # ── P&L box plot + equity curves (side by side) ───────────────────
         if exec_agents:
@@ -1179,6 +1225,33 @@ with tab_book:
 
         with st.expander("Raw trade attribution data"):
             st.dataframe(attr_df, width="stretch")
+
+    # ── Fill-level analysis (v2.5.7) ──────────────────────────────────────
+    rich_ob: metrics.RichSimulationMetrics | None = st.session_state.get("rich_metrics")
+    if rich_ob is not None and rich_ob.fills:
+        st.markdown(
+            "<div style=\"font-family:'Inter',sans-serif;font-size:0.72rem;color:#6B7280;margin:12px 0 4px 0;text-transform:uppercase;letter-spacing:0.06em\">Fill-Level Analysis (v2.5.7)</div>",
+            unsafe_allow_html=True,
+        )
+        fill_df = metrics.build_fill_records_df(rich_ob.fills)
+        if "slippage (bps)" in fill_df.columns:
+            _slip = fill_df["slippage (bps)"].dropna()
+            if len(_slip) > 0:
+                st.markdown(
+                    metric_row(
+                        [
+                            {"label": "Fills Analysed", "value": f"{len(fill_df):,}"},
+                            {"label": "Avg Fill Slippage", "value": f"{_slip.mean():.1f} bps"},
+                            {"label": "Median Slippage", "value": f"{_slip.median():.1f} bps"},
+                            {"label": "Max Slippage", "value": f"{_slip.max():.0f} bps"},
+                            {"label": "% Adverse", "value": f"{(_slip > 0).mean() * 100:.1f}%"},
+                        ]
+                    ),
+                    unsafe_allow_html=True,
+                )
+        st.plotly_chart(charts.fill_slippage_histogram(fill_df), width="stretch")
+        with st.expander("Raw fill records"):
+            st.dataframe(fill_df, width="stretch")
 
     if not _has_orders and not _has_trades:
         st.warning("Order log data not available. Enable **Include raw agent logs** in the sidebar to populate this tab.")
