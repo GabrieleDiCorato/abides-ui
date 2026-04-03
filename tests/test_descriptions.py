@@ -52,6 +52,21 @@ class TestMetricDescriptions:
         "LOB Imbalance σ",
         "VPIN",
         "Resilience (ms)",
+        # v2.5.7 microstructure additions
+        "Effective Spread (¢)",
+        "Market OTT",
+        "% Two-Sided",
+        # Rich agent metrics (v2.5.7)
+        "Avg Sharpe",
+        "Avg OTT Ratio",
+        "Avg Inventory σ",
+        "Total Trades (Rich)",
+        "Avg Fill Slippage",
+        # Fill-level analysis (v2.5.7)
+        "Fills Analysed",
+        "Median Slippage",
+        "Max Slippage",
+        "% Adverse",
         # Execution summary
         "Exec Agents",
         "Total Filled",
@@ -98,7 +113,7 @@ class TestGlassmorphismCardDescription:
     def test_card_without_description(self) -> None:
         html = glassmorphism_card(label="Test", value="42")
         assert "ⓘ" not in html
-        assert 'title=' not in html.split('style=')[0]  # no title on card div
+        assert "title=" not in html.split("style=")[0]  # no title on card div
 
     def test_card_with_description(self) -> None:
         html = glassmorphism_card(label="VWAP", value="$100.00", description="Volume-Weighted Average Price")
@@ -139,4 +154,4 @@ class TestMetricRowAutoEnrich:
         """Tooltip uses native title attr, no <style> needed."""
         html = metric_row([{"label": "Volume", "value": "1000"}])
         assert "<style>" not in html
-        assert 'title=' in html
+        assert "title=" in html

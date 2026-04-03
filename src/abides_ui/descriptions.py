@@ -106,6 +106,51 @@ METRIC_DESCRIPTIONS: dict[str, str] = {
         "average after a shock (Foucault, Kadan & Kandel, 2013). "
         "Faster resilience indicates a healthier, more self-correcting order book."
     ),
+    "Effective Spread (¢)": (
+        "Average effective spread in cents: mean(2 × |FillPrice − MidPrice|). "
+        "Unlike the quoted spread (visible on the book), the effective spread "
+        "measures the actual cost incurred by liquidity takers, accounting for "
+        "fills inside the quote and price improvement."
+    ),
+    "Market OTT": (
+        "Market-wide order-to-trade ratio: N_submissions / N_fills (MiFID II RTS 9). "
+        "A high OTT ratio may indicate excessive order cancellation or algorithmic "
+        "quote stuffing. Regulators use this metric for high-frequency trading oversight."
+    ),
+    "% Two-Sided": (
+        "Percentage of time the order book maintained a two-sided market (both bid and "
+        "ask present). Pre-computed from the result microstructure. A two-sided book "
+        "is essential for orderly price discovery and continuous market making."
+    ),
+    # ── Rich agent metrics (v2.5.7) ──────────────────────────────────────
+    "Avg Sharpe": ("Average annualised Sharpe ratio across all agents with equity curves: SR = (mean(R) / std(R)) × √252. Aggregates risk-adjusted performance across the agent population."),
+    "Avg OTT Ratio": ("Average order-to-trade ratio across agents: mean(N_submitted / N_filled). Higher values suggest more speculative or high-frequency order management."),
+    "Avg Inventory σ": (
+        "Average intraday inventory standard deviation across agents. "
+        "Reconstructed from fill sequences (buy +qty, sell −qty). High inventory σ "
+        "indicates aggressive position building/unwinding during the session."
+    ),
+    "Total Trades (Rich)": ("Sum of trade_count across all agents in the rich metrics aggregation. Each agent's trade_count reflects its individual participation in the market."),
+    "Avg Fill Slippage": (
+        "Mean per-fill slippage in basis points across all fills: "
+        "Slippage_bps = (FillPrice − MidPrice) / MidPrice × 10,000. "
+        "For buys, positive = paid above mid (adverse); for sells, positive = received above mid (favourable)."
+    ),
+    # ── Fill-level analysis (v2.5.7) ─────────────────────────────────────
+    "Fills Analysed": (
+        "Total number of individual fill events processed for slippage and adverse-selection analysis. "
+        "Each fill is matched against the contemporaneous L1 mid-price to compute execution quality metrics."
+    ),
+    "Median Slippage": (
+        "Median per-fill slippage in basis points. The median is more robust to outlier fills "
+        "(e.g., fills during liquidity gaps) than the mean and provides a better estimate of typical execution quality."
+    ),
+    "Max Slippage": ("Maximum per-fill slippage observed in basis points. Captures the worst single-fill execution cost and is relevant for tail-risk monitoring and best-execution compliance."),
+    "% Adverse": (
+        "Percentage of fills with positive slippage (i.e., worse than mid-price execution). "
+        "For buys this means paying above mid; for sells, receiving below mid. A high percentage signals "
+        "systematic adverse selection by informed counterparties."
+    ),
     # ── Execution summary ─────────────────────────────────────────────────
     "Exec Agents": ("Number of execution-algorithm agents (e.g., POV, TWAP, VWAP) active in the simulation."),
     "Total Filled": ("Aggregate shares filled versus the aggregate target quantity across all execution agents: Filled / Target."),
