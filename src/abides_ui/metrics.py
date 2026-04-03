@@ -16,6 +16,9 @@ from abides_markets.simulation.metrics import (
     compute_avg_liquidity as _compute_avg_liquidity,
 )
 from abides_markets.simulation.metrics import (
+    compute_effective_spread as _compute_effective_spread,
+)
+from abides_markets.simulation.metrics import (
     compute_lob_imbalance as _compute_lob_imbalance,
 )
 from abides_markets.simulation.metrics import (
@@ -23,6 +26,9 @@ from abides_markets.simulation.metrics import (
 )
 from abides_markets.simulation.metrics import (
     compute_resilience as _compute_resilience,
+)
+from abides_markets.simulation.metrics import (
+    compute_rich_metrics as _compute_rich_metrics,
 )
 from abides_markets.simulation.metrics import (
     compute_sharpe_ratio as _compute_sharpe_ratio,
@@ -33,7 +39,7 @@ from abides_markets.simulation.metrics import (
 from abides_markets.simulation.metrics import (
     compute_vpin as _compute_vpin,
 )
-from abides_markets.simulation.result import AgentData, TradeAttribution
+from abides_markets.simulation.result import AgentData, FillRecord, RichSimulationMetrics, TradeAttribution
 
 # ── L1 series derivation ─────────────────────────────────────────────────────
 
@@ -457,7 +463,7 @@ def compute_maker_taker_summary(attr_df: pd.DataFrame) -> MakerTakerSummary:
 
 @dataclass
 class MicrostructureMetrics:
-    """Advanced market quality metrics computed via abides-hasufel v2.5.3."""
+    """Advanced market quality metrics computed via abides-hasufel v2.5.3+."""
 
     mean_spread_cents: float | None
     volatility_ann: float | None
@@ -468,6 +474,10 @@ class MicrostructureMetrics:
     lob_imbalance_std: float | None
     vpin: float | None
     resilience_ns: float | None
+    # v2.5.7 additions
+    effective_spread_cents: float | None
+    market_ott_ratio: float | None
+    pct_time_two_sided: float | None
 
 
 def compute_microstructure_metrics(
@@ -500,9 +510,16 @@ def compute_microstructure_metrics(
 
     # VPIN requires fill tuples (price_cents, qty, time_ns) and L1
     vpin = None
+    effective_spread = None
     if market.trades:
         fills = [(t.price_cents, t.quantity, t.time_ns) for t in market.trades]
         vpin = _compute_vpin(fills, l1)
+        effective_spread = _compute_effective_spread(fills, l1)
+
+    # v2.5.7: pre-computed microstructure on MarketSummary
+    micro_pre = market.microstructure
+    market_ott = micro_pre.market_ott_ratio if micro_pre is not None else None
+    pct_two = micro_pre.pct_time_two_sided if micro_pre is not None else None
 
     return MicrostructureMetrics(
         mean_spread_cents=mean_spread,
@@ -514,4 +531,99 @@ def compute_microstructure_metrics(
         lob_imbalance_std=imb_std,
         vpin=vpin,
         resilience_ns=resilience,
+        effective_spread_cents=effective_spread,
+        market_ott_ratio=market_ott,
+        pct_time_two_sided=pct_two,
+    )
+
+
+# ── Rich metrics (v2.5.7) ────────────────────────────────────────────────────
+
+
+def compute_rich(
+    result: SimulationResult,
+    *,
+    include_fills: bool = False,
+) -> RichSimulationMetrics:
+    """Compute enriched per-agent and per-fill metrics via the v2.5.7 API."""
+    return _compute_rich_metrics(result, include_fills=include_fills)
+
+
+def build_rich_agent_dataframe(rich: RichSimulationMetrics) -> pd.DataFrame:
+    """Build an analytical DataFrame from RichAgentMetrics."""
+    rows = []
+    for a in rich.agents:
+        row: dict[str, object] = {
+            "ID": a.agent_id,
+            "Type": a.agent_type,
+            "Name": a.agent_name,
+            "P&L ($)": a.total_pnl_cents / 100,
+            "Trade Count": a.trade_count,
+        }
+        if a.sharpe_ratio is not None:
+            row["Sharpe"] = round(a.sharpe_ratio, 4)
+        if a.max_drawdown_cents is not None:
+            row["Max DD ($)"] = a.max_drawdown_cents / 100
+        if a.fill_rate_pct is not None:
+            row["Fill Rate (%)"] = round(a.fill_rate_pct, 2)
+        if a.order_to_trade_ratio is not None:
+            row["OTT Ratio"] = round(a.order_to_trade_ratio, 2)
+        if a.vwap_cents is not None:
+            row["VWAP ($)"] = a.vwap_cents / 100
+        if a.inventory_std is not None:
+            row["Inventory σ"] = round(a.inventory_std, 2)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_fill_records_df(fills: list[FillRecord]) -> pd.DataFrame:
+    """Convert FillRecord list into a tidy DataFrame."""
+    rows = []
+    for f in fills:
+        row: dict[str, object] = {
+            "time": pd.Timestamp(f.time_ns, unit="ns"),
+            "agent_id": f.agent_id,
+            "side": f.side,
+            "price ($)": f.price_cents / 100,
+            "quantity": f.quantity,
+        }
+        if f.slippage_bps is not None:
+            row["slippage (bps)"] = f.slippage_bps
+        if f.adverse_selection_bps:
+            for window, val in f.adverse_selection_bps.items():
+                row[f"AS {window} (bps)"] = val
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+@dataclass
+class RichSummary:
+    """Aggregate statistics from RichAgentMetrics."""
+
+    avg_sharpe: float | None
+    avg_ott_ratio: float | None
+    avg_inventory_std: float | None
+    total_trade_count: int
+    avg_fill_slippage_bps: float | None
+
+
+def compute_rich_summary(rich: RichSimulationMetrics) -> RichSummary:
+    """Compute summary stats across all rich agent metrics."""
+    sharpes = [a.sharpe_ratio for a in rich.agents if a.sharpe_ratio is not None]
+    otts = [a.order_to_trade_ratio for a in rich.agents if a.order_to_trade_ratio is not None]
+    inv_stds = [a.inventory_std for a in rich.agents if a.inventory_std is not None]
+    total_trades = sum(a.trade_count for a in rich.agents)
+
+    avg_slip = None
+    if rich.fills:
+        slippages = [f.slippage_bps for f in rich.fills if f.slippage_bps is not None]
+        if slippages:
+            avg_slip = sum(slippages) / len(slippages)
+
+    return RichSummary(
+        avg_sharpe=sum(sharpes) / len(sharpes) if sharpes else None,
+        avg_ott_ratio=sum(otts) / len(otts) if otts else None,
+        avg_inventory_std=sum(inv_stds) / len(inv_stds) if inv_stds else None,
+        total_trade_count=total_trades,
+        avg_fill_slippage_bps=avg_slip,
     )
